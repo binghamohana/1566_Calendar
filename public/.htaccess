@@ -1,0 +1,15 @@
+# Apache settings for the public folder (used when AllowOverride permits; the
+# same rules are in docs/apache-vhost.conf for servers that disable .htaccess).
+Options -Indexes
+DirectoryIndex index.php
+
+<IfModule mod_headers.c>
+  <FilesMatch "\.(css|js|woff2|svg|jpg|png|webp)$">
+    Header set Cache-Control "public, max-age=604800"
+  </FilesMatch>
+</IfModule>
+
+# Never serve dotfiles
+<FilesMatch "^\.">
+  Require all denied
+</FilesMatch>

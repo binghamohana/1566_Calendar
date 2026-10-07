@@ -1,0 +1,13 @@
+# Only used if this whole folder is placed inside a web root (e.g. /var/www/html/book/)
+# AND Apache allows .htaccess (AllowOverride All). The recommended setup instead points
+# Apache at the public/ folder with an Alias — see docs/DEPLOYMENT.md.
+Options -Indexes
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  # Code, config, logs and backups are never served
+  RewriteRule ^(config|src|storage|lib|sql|bin|tests|docs)(/|$) - [F,L]
+  RewriteRule ^\. - [F,L]
+  # Everything else is served from public/
+  RewriteCond %{REQUEST_URI} !/public/
+  RewriteRule ^(.*)$ public/$1 [L]
+</IfModule>

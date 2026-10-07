@@ -1,0 +1,12 @@
+# Uploaded photos are images only — never run code from this folder.
+<IfModule mod_php.c>
+  php_flag engine off
+</IfModule>
+<IfModule mod_php8.c>
+  php_flag engine off
+</IfModule>
+RemoveHandler .php .phtml .phar
+RemoveType .php .phtml .phar
+<FilesMatch "\.(php|phtml|phar|pl|py|cgi|sh)$">
+  Require all denied
+</FilesMatch>
