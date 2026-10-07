@@ -111,8 +111,17 @@ final class Mailer
         $mail = new PHPMailer(true);
         $mail->CharSet = PHPMailer::CHARSET_UTF8;
         $mail->Timeout = 20;
+        $serverReplies = [];
         if ($transport === 'smtp') {
             $mail->isSMTP();
+            // Keep the server's replies so a failure can say why. Lines sent by us (which include
+            // the login) are discarded, never stored.
+            $mail->SMTPDebug = \PHPMailer\PHPMailer\SMTP::DEBUG_SERVER;
+            $mail->Debugoutput = static function ($line) use (&$serverReplies): void {
+                if (str_starts_with((string) $line, 'SERVER -> CLIENT:')) {
+                    $serverReplies[] = trim(substr((string) $line, 17));
+                }
+            };
             $mail->Host = (string) App::config('mail.host');
             $mail->Port = (int) App::config('mail.port', 587);
             $encryption = (string) App::config('mail.encryption', 'tls');
@@ -141,6 +150,18 @@ final class Mailer
         if ($row['ics']) {
             $mail->addStringAttachment($row['ics'], 'reservation.ics', PHPMailer::ENCODING_BASE64, 'text/calendar; charset=utf-8; method=PUBLISH');
         }
-        $mail->send();
+        try {
+            $mail->send();
+        } catch (\Throwable $e) {
+            // PHPMailer's message is generic ("Could not authenticate"); the server's error reply says why.
+            $reply = '';
+            foreach ($serverReplies as $line) {
+                if (preg_match('/^[45]\d\d[ -]/', $line)) {
+                    $reply .= ($reply === '' ? '' : ' ') . preg_replace('/^[45]\d\d[ -](\d\.\d\.\d+ )?/', '', $line);
+                    $code = $code ?? substr($line, 0, 3);
+                }
+            }
+            throw new \RuntimeException($e->getMessage() . ($reply !== '' ? ' Server said: ' . ($code ?? '') . ' ' . trim($reply) : ''), 0, $e);
+        }
     }
 }
