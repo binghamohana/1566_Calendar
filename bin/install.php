@@ -34,6 +34,9 @@ $schema = file_get_contents(GPC_ROOT . '/sql/schema.sql');
 foreach (array_filter(array_map('trim', preg_split('/;\s*\n/', preg_replace('/^--.*$/m', '', $schema)))) as $statement) {
     Db::pdo()->exec($statement);
 }
+foreach (GPC\Migrations::run() as $step) {
+    echo "✓ Updated: $step\n";
+}
 echo "✓ Database tables are ready\n";
 
 // 2. Launch spaces (only when there are none yet)

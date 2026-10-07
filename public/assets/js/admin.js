@@ -3,7 +3,7 @@
   'use strict';
 
   var boot = GPC.boot = JSON.parse(document.getElementById('boot').textContent);
-  var S = { admin: null, csrf: '', spaces: [], settings: {}, today: null, nowMin: 0 };
+  var S = { admin: null, csrf: '', spaces: [], settings: {}, today: null, nowMin: 0, approvalsPending: 0 };
   var $root = $('#admin-app');
   var $content = null;
   var esc = GPC.esc;
@@ -42,6 +42,13 @@
   function applyMe(res) {
     S.admin = res.admin; S.csrf = res.csrf; S.spaces = res.spaces; S.settings = res.settings;
     S.today = res.today; S.nowMin = res.now_min;
+    S.approvalsPending = res.approvals_pending || 0;
+    updateBadge();
+  }
+
+  function updateBadge() {
+    $root.find('[data-nav="approvals"] .nav-badge').remove();
+    if (S.approvalsPending > 0) $root.find('[data-nav="approvals"]').append($('<span class="nav-badge"></span>').text(S.approvalsPending));
   }
 
   function refreshMe() { return get('me').then(applyMe); }
@@ -77,7 +84,7 @@
 
   var NAV = [
     ['dashboard', 'Dashboard', 'spark'], ['calendar', 'Calendar', 'cal'], ['reservations', 'Reservations', 'clock'],
-    ['spaces', 'Spaces', 'door'], ['settings', 'Settings', 'key'], ['emails', 'Email log', 'mail'], ['admins', 'Administrators', 'users']
+    ['approvals', 'Approved emails', 'check'], ['spaces', 'Spaces', 'door'], ['settings', 'Settings', 'key'], ['emails', 'Email log', 'mail'], ['admins', 'Administrators', 'users']
   ];
 
   function renderShell() {
@@ -93,6 +100,7 @@
       '<div class="links"><a href="../" target="_blank" rel="noopener">Public page ↗</a><button type="button" class="js-password">Password</button><button type="button" class="js-logout">Sign out</button></div></div></aside>';
     $root.html('<div class="shell">' + side + '<div>' + mob + '<main class="content"></main></div></div>');
     $content = $root.find('.content');
+    updateBadge();
   }
 
   $(document).on('click', '.js-logout', function () {
@@ -111,6 +119,7 @@
       case 'calendar': return viewCalendar(parts[1], parts[2], parts[3]);
       case 'reservations': return viewReservations();
       case 'booking': viewReservations(); return openBooking(+parts[1]);
+      case 'approvals': return viewApprovals();
       case 'spaces': return viewSpaces();
       case 'settings': return viewSettings();
       case 'emails': return viewEmails();
@@ -168,7 +177,13 @@
       });
 
       var $health = $('<div class="panel"><h2>System health</h2></div>').append(healthList(d.health));
-      $content.empty().append(pageHead('Dashboard', newButtons()), $k,
+      var $approvals = $();
+      if (d.approvals.length) {
+        $approvals = $('<div class="panel" style="margin-bottom:18px"><h2>Waiting for your approval <a href="#/approvals">Approved emails</a></h2></div>');
+        d.approvals.forEach(function (a) { $approvals.append(approvalCard(a, viewDashboard)); });
+      }
+      S.approvalsPending = d.approvals.length; updateBadge();
+      $content.empty().append(pageHead('Dashboard', newButtons()), $approvals, $k,
         $('<div class="grid-3"></div>').append($('<div></div>').append($up, $can), $('<div></div>').append($use, $health)));
     }, fail);
   }
@@ -196,6 +211,7 @@
     else row('ok', 'Email sending via ' + h.mail_transport.toUpperCase());
     if (h.emails_failed) row('bad', h.emails_failed + ' email' + (h.emails_failed === 1 ? '' : 's') + ' failed', 'see the Email log.');
     if (h.emails_pending > 5) row('warn', h.emails_pending + ' emails waiting to send');
+    if (h.approvals_pending) row('warn', h.approvals_pending + ' email address' + (h.approvals_pending === 1 ? '' : 'es') + ' waiting for approval', 'see Approved emails.');
     return $l;
   }
 
@@ -267,8 +283,8 @@
           : (b.date === date ? cols.filter(function (c) { return c.spaceId === b.space_id; })[0] : null);
         if (!col) return;
         var sp = spaceById(b.space_id);
-        events.push({ col: col.key, start: b.start_min, end: b.end_min, kind: b.kind, title: who(b), sub: b.kind === 'block' ? '' : (b.title || ''),
-          color: sp ? sp.color : null, clickable: true, data: b });
+        events.push({ col: col.key, start: b.start_min, end: b.end_min, kind: b.kind, title: (b.status === 'pending' ? 'Pending: ' : '') + who(b),
+          sub: b.kind === 'block' ? '' : (b.title || ''), pending: b.status === 'pending', color: sp ? sp.color : null, clickable: true, data: b });
       });
       cal.render({ columns: cols, events: events, today: res.today, nowMin: res.now_min, range: [0, 1440], colMin: cols.length > 4 ? 140 : 0 });
       cal.scrollToMin(date === res.today ? Math.max(0, Math.min(res.now_min - 60, 17 * 60)) : 7 * 60);
@@ -289,7 +305,7 @@
     };
     var $when = sel('when', [['upcoming', 'Upcoming'], ['past', 'Past'], ['all', 'All dates']]);
     var $space = sel('space_id', [['', 'All spaces']].concat(S.spaces.map(function (s) { return [String(s.id), s.name]; })));
-    var $status = sel('status', [['', 'Any status'], ['confirmed', 'Confirmed'], ['cancelled', 'Cancelled']]);
+    var $status = sel('status', [['', 'Any status'], ['confirmed', 'Confirmed'], ['pending', 'Awaiting approval'], ['cancelled', 'Cancelled']]);
     var $kind = sel('kind', [['', 'Reservations & blocks'], ['reservation', 'Reservations'], ['block', 'Blocks']]);
     $f.append($q, $when, $space, $status, $kind);
     var $export = $('<a class="btn btn-ghost btn-sm">Export CSV</a>');
@@ -307,7 +323,8 @@
         var $t = $('<table class="table"><thead><tr><th>When</th><th>Space</th><th>Booked by</th><th class="hide-sm">Title</th><th>Status</th></tr></thead><tbody></tbody></table>');
         res.bookings.forEach(function (b) {
           var sp = spaceById(b.space_id) || {};
-          var status = b.status === 'cancelled' ? '<span class="badge cancelled">Cancelled</span>' : (b.kind === 'block' ? '<span class="badge block">Block</span>' : '<span class="badge ok">Confirmed</span>');
+          var status = b.status === 'cancelled' ? '<span class="badge cancelled">Cancelled</span>' : (b.status === 'pending' ? '<span class="badge pending">Awaiting approval</span>'
+            : (b.kind === 'block' ? '<span class="badge block">Block</span>' : '<span class="badge ok">Confirmed</span>'));
           var $tr = $('<tr class="clickable"></tr>').toggleClass('is-cancelled', b.status === 'cancelled').on('click', function () { openBooking(b.id); });
           $tr.append($('<td class="nowrap"></td>').append($('<div class="strike"></div>').text(GPC.date.short(b.date)), $('<div class="sub"></div>').text(GPC.time.range(b.start_min, b.end_min))));
           $tr.append($('<td></td>').html('<i class="sw-dot" style="--c:' + (sp.color || '#999') + '"></i>').append(document.createTextNode(sp.short_name || sp.name || '')));
@@ -346,7 +363,7 @@
     var d = GPC.dialog({ title: 'Loading…', body: '<div class="muted"><span class="spinner"></span></div>', wide: true });
     get('booking', { id: id }).then(function (res) {
       var b = res.booking, sp = spaceById(b.space_id) || { name: 'Space' };
-      var status = b.status === 'cancelled' ? 'Cancelled' : (b.kind === 'block' ? 'Block' : 'Confirmed');
+      var status = b.status === 'cancelled' ? 'Cancelled' : (b.status === 'pending' ? 'Awaiting approval' : (b.kind === 'block' ? 'Block' : 'Confirmed'));
       d.setTitle(sp.name, status + ' · Ref ' + b.ref);
       var $dl = $('<dl class="detail-grid"></dl>');
       var row = function (k, v, isHtml) { if (v === null || v === undefined || v === '') return; $dl.append($('<dt></dt>').text(k), isHtml ? $('<dd></dd>').append(v) : $('<dd></dd>').text(v)); };
@@ -369,7 +386,13 @@
         row('Manage link', $('<div class="copy-row"></div>').append($('<input class="input" readonly>').val(b.manage_url),
           $('<button type="button" class="btn btn-ghost btn-sm">Copy</button>').on('click', function () { copy(b.manage_url); })), true);
       }
-      var $body = $('<div></div>').append($dl);
+      var $body = $('<div></div>');
+      if (res.access && res.access.status === 'pending') {
+        $body.append($('<div class="alert alert-warn" style="display:block"></div>').append(
+          $('<div style="margin-bottom:10px"></div>').text(b.email + ' isn’t on the approved list yet, so this reservation is held until you decide. Approving confirms every reservation waiting from this address.'),
+          approvalButtons(res.access, function () { d.close(); reloadCurrent(); })));
+      }
+      $body.append($dl);
       if (res.emails.length) {
         var $em = $('<div class="history"><strong>Emails</strong></div>');
         res.emails.forEach(function (e) {
@@ -387,7 +410,7 @@
       d.$body.empty().append($body);
       var $acts = $('<div style="display:flex;gap:8px;flex-wrap:wrap;width:100%"></div>');
       $acts.append($('<button type="button" class="btn btn-sm">Edit</button>').on('click', function () { d.close(); bookingForm({ edit: b }); }));
-      if (b.status === 'confirmed') $acts.append($('<button type="button" class="btn btn-danger-ghost btn-sm">Cancel</button>').on('click', function () { cancelDialog(b, d); }));
+      if (b.status !== 'cancelled') $acts.append($('<button type="button" class="btn btn-danger-ghost btn-sm">Cancel</button>').on('click', function () { cancelDialog(b, d); }));
       $acts.append($('<span style="flex:1"></span>'), $('<button type="button" class="btn btn-quiet btn-sm">Delete</button>').on('click', function () { deleteDialog(b, d); }));
       d.$foot.empty().append($acts);
       d.$el.append(d.$foot);
@@ -573,6 +596,128 @@
       });
     }
     $f.on('submit', function (e) { e.preventDefault(); submit(false); });
+  }
+
+  // ------------------------------------------------------------------ approved emails
+
+  /** Approve / Approve whole domain / Decline buttons for one pending address. */
+  function approvalButtons(a, done) {
+    var $w = $('<div style="display:flex;gap:8px;flex-wrap:wrap"></div>');
+    var act = function (action, data, $btn) {
+      $w.find('button').prop('disabled', true); $btn.addClass('is-busy');
+      post(action, $.extend({ id: a.id }, data)).then(function (r) {
+        S.approvalsPending = Math.max(0, S.approvalsPending - 1); updateBadge();
+        GPC.toast(action === 'access_approve'
+          ? 'Approved' + (r.bookings ? ' — ' + r.bookings + ' reservation' + (r.bookings === 1 ? '' : 's') + ' confirmed and emailed' : '')
+          : 'Declined' + (r.bookings ? ' — ' + r.bookings + ' held reservation' + (r.bookings === 1 ? '' : 's') + ' released' : ''));
+        done();
+      }, function (err) { $w.find('button').prop('disabled', false); $btn.removeClass('is-busy'); fail(err); });
+    };
+    var $ok = $('<button type="button" class="btn btn-sm"></button>').text('Approve ' + a.pattern);
+    $ok.on('click', function () { act('access_approve', {}, $ok); });
+    $w.append($ok);
+    if (a.domain_ok && a.domain) {
+      var $dom = $('<button type="button" class="btn btn-ghost btn-sm"></button>').text('Approve everyone @' + a.domain);
+      $dom.on('click', function () { act('access_approve', { whole_domain: true }, $dom); });
+      $w.append($dom);
+    }
+    var $no = $('<button type="button" class="btn btn-danger-ghost btn-sm">Decline</button>');
+    $no.on('click', function () {
+      var $f = $('<div><p style="margin:0 0 12px;color:var(--ink-2)"></p><div class="field"><label for="dc-reason">Reason <span class="opt">(optional — included in the email to them)</span></label><input class="input" id="dc-reason" maxlength="255"></div></div>');
+      $f.find('p').text('Their held reservations are released and they’re told by email. If they book again, you’ll get a new request.');
+      var $go = $('<button type="button" class="btn btn-danger">Decline</button>');
+      var dd = GPC.dialog({ title: 'Decline ' + a.pattern + '?', body: $f, foot: $go });
+      $go.on('click', function () { dd.close(); act('access_decline', { reason: $f.find('input').val() }, $no); });
+    });
+    return $w.append($no);
+  }
+
+  function approvalCard(a, done) {
+    var $c = $('<div class="approval"></div>');
+    $c.append($('<div class="ap-head"></div>').append(
+      $('<strong></strong>').text(a.name || a.pattern),
+      $('<span></span>').text([a.name ? a.pattern : null, a.company].filter(Boolean).join(' · ')),
+      $('<span class="muted"></span>').text('asked ' + localDateTime(a.requested_at))));
+    if (a.bookings.length) {
+      var $ul = $('<ul class="ap-list"></ul>');
+      a.bookings.forEach(function (b) {
+        var sp = spaceById(b.space_id) || {};
+        $ul.append($('<li></li>').html('<i class="sw-dot" style="--c:' + (sp.color || '#999') + '"></i>').append(document.createTextNode(
+          (sp.short_name || sp.name || '') + ' · ' + GPC.date.short(b.date) + ', ' + GPC.time.range(b.start_min, b.end_min) + (b.title ? ' · ' + b.title : ''))));
+      });
+      $c.append($ul);
+    } else {
+      $c.append('<p class="muted small" style="margin:6px 0 10px">No reservations waiting (they may have cancelled).</p>');
+    }
+    return $c.append(approvalButtons(a, done));
+  }
+
+  function viewApprovals() {
+    $content.empty().append(pageHead('Approved emails'), '<div class="muted"><span class="spinner"></span></div>');
+    get('access').then(function (res) {
+      var pending = res.entries.filter(function (e) { return e.status === 'pending'; });
+      var approved = res.entries.filter(function (e) { return e.status === 'approved'; });
+      var declined = res.entries.filter(function (e) { return e.status === 'declined'; });
+      S.approvalsPending = pending.length; updateBadge();
+
+      var $intro = $('<p class="muted" style="margin:-10px 0 18px;max-width:760px"></p>');
+      $intro.text(res.require_approval
+        ? 'People on this list book instantly. Anyone else’s booking is held as pending, and the request is emailed to ' + res.approvers.join(', ') + '. Approving someone adds them here.'
+        : 'Approval is turned off (Settings → Booking rules), so anyone can book instantly. This list is kept for when it’s turned back on.');
+
+      var $pend = $();
+      if (pending.length) {
+        $pend = $('<div class="panel" style="margin-bottom:18px"><h2>Waiting for approval</h2></div>');
+        pending.forEach(function (a) { $pend.append(approvalCard(a, viewApprovals)); });
+      }
+
+      var $add = $('<div class="panel" style="margin-bottom:18px"><h2>Add to the approved list</h2></div>');
+      var $ta = $('<textarea class="textarea" rows="4" placeholder="jane@acme.com&#10;@tenantcompany.com"></textarea>');
+      var $addBtn = $('<button type="button" class="btn btn-sm">Add</button>');
+      $add.append($('<div class="field"></div>').append($ta, $('<div class="field-hint"></div>').text(
+        'One per line (commas work too). Use @company.com to approve everyone at a tenant company. Don’t add public domains like @gmail.com — approve those people individually.')), $addBtn);
+      $addBtn.on('click', function () {
+        if (!$.trim($ta.val())) return;
+        $addBtn.addClass('is-busy');
+        post('access_add', { entries: $ta.val() }).then(function (r) {
+          $addBtn.removeClass('is-busy');
+          var msg = 'Added ' + r.added.length + (r.confirmed ? ' · ' + r.confirmed + ' waiting reservation' + (r.confirmed === 1 ? '' : 's') + ' confirmed' : '');
+          if (r.invalid.length) GPC.toast('Not valid, skipped: ' + r.invalid.join(', '), 'error');
+          GPC.toast(msg);
+          viewApprovals();
+        }, function (err) { $addBtn.removeClass('is-busy'); fail(err); });
+      });
+
+      var table = function (title, rows, withApprove) {
+        var $p = $('<div class="table-wrap" style="margin-bottom:18px"></div>');
+        if (!rows.length) return $p.html('<div class="empty" style="padding:28px"><p>Nobody yet.</p></div>');
+        var $t = $('<table class="table"><thead><tr><th></th><th class="hide-sm">Type</th><th class="hide-sm"></th><th></th></tr></thead><tbody></tbody></table>');
+        $t.find('th').eq(0).text(title);
+        $t.find('th').eq(2).text(withApprove ? 'Declined' : 'Approved');
+        rows.forEach(function (e) {
+          var $tr = $('<tr></tr>');
+          $tr.append($('<td></td>').append($('<div></div>').text(e.pattern), (e.name || e.company) ? $('<div class="sub"></div>').text([e.name, e.company].filter(Boolean).join(' · ')) : ''));
+          $tr.append($('<td class="hide-sm"></td>').text(e.is_domain ? 'Whole domain' : 'Address'));
+          $tr.append($('<td class="hide-sm"></td>').append($('<div></div>').text(localDateTime(e.decided_at || e.created_at)),
+            $('<div class="sub"></div>').text((e.decided_by || '').replace(/^admin:/, '') + (e.note ? ' — ' + e.note : ''))));
+          var $acts = $('<td style="text-align:right;white-space:nowrap"></td>');
+          if (withApprove) {
+            $acts.append($('<button type="button" class="btn btn-ghost btn-sm">Approve</button>').on('click', function () {
+              post('access_add', { entries: e.pattern }).then(function () { GPC.toast('Approved'); viewApprovals(); }, fail);
+            }), ' ');
+          }
+          $acts.append($('<button type="button" class="btn btn-quiet btn-sm">Remove</button>').on('click', function () {
+            GPC.confirm({ title: 'Remove ' + e.pattern + '?', message: withApprove ? 'Removes it from the declined list.' : 'Future bookings from ' + (e.is_domain ? 'this domain' : 'this address') + ' will need approval again. Existing reservations are not affected.', ok: 'Remove', danger: true })
+              .then(function (yes) { if (yes) post('access_remove', { id: e.id }).then(viewApprovals, fail); });
+          }));
+          $t.find('tbody').append($tr.append($acts));
+        });
+        return $p.append($t);
+      };
+
+      $content.empty().append(pageHead('Approved emails'), $intro, $pend, $add, table('Approved (' + approved.length + ')', approved, false));
+      if (declined.length) $content.append($('<h2 class="section-title" style="font-size:22px">Declined</h2>'), table('Declined (' + declined.length + ')', declined, true));
+    }, fail);
   }
 
   // ------------------------------------------------------------------ spaces
@@ -773,7 +918,11 @@
           input('max_upcoming_per_email', 'Max upcoming bookings per person', 'number', '0 = no limit.', { min: 0 })),
         $('<div class="row"></div>').append(
           input('rate_limit_per_hour', 'New bookings per network per hour', 'number', 'Stops automated flooding. Everyone in the building may share one internet connection, so keep this generous.', { min: 1 }),
-          input('allowed_email_domains', 'Only allow these email domains <span class="opt">(optional)</span>', 'text', 'e.g. acme.com, example.org — blank lets anyone book.'))));
+          $('<div></div>')),
+        $('<div style="border-top:1px solid var(--line-soft);padding-top:16px;margin-top:4px"></div>').append(
+          check('require_approval', 'Require approval for new email addresses'),
+          $('<p class="field-hint" style="margin:-4px 0 14px 28px">Addresses and domains on the approved list book instantly. Anyone else’s booking is held as “pending” and the request is emailed for approval. Manage the list under Approved emails.</p>'),
+          input('approval_emails', 'Send approval requests to <span class="opt">(comma-separated)</span>', 'text', 'Blank = the management email above, or every administrator if that’s blank too.'))));
 
       // Emails
       var $em = panel('Automated emails', 'Confirmations always go out right away. Reminders and after-use notes are sent by the background task.');

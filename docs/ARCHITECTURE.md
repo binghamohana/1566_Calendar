@@ -82,7 +82,7 @@ to the booking address.
 - a hidden honeypot field and a signed page token (scripts that post directly are refused)
 - limits on new bookings per network per hour, upcoming bookings per email, maximum length and
   how far ahead
-- an optional allow-list of tenant email domains
+- an approved-email list: unknown addresses are held as "pending" until the building manager approves them
 
 **Admin security:** bcrypt passwords, sign-in rate limiting, signed HttpOnly SameSite cookies,
 CSRF tokens on every change, and strict security headers (CSP, frame denial) on every page.
@@ -92,7 +92,8 @@ CSRF tokens on every change, and strict security headers (CSP, frame denial) on 
 | Table | Holds |
 |---|---|
 | `spaces` | Rooms: name, description, capacity, amenities, photo, color, opening hours (JSON), per-space rule overrides, reminder instructions, on/off |
-| `bookings` | Reservations **and** admin blocks (`kind`), times (UTC), who/what, private flag, series ID for repeats and multi-room blocks, manage token, status |
+| `bookings` | Reservations **and** admin blocks (`kind`), times (UTC), who/what, private flag, series ID for repeats and multi-room blocks, manage token, status (`pending` = awaiting approval, `confirmed`, `cancelled`) |
+| `email_access` | The approved list (addresses and `@domains`) plus pending/declined approval requests with their one-time links |
 | `emails` | Outbox and log for every email: status, attempts, last error |
 | `settings` | Admin-editable settings (defaults live in `src/Settings.php`, so new settings need no migration) |
 | `admins` | Management accounts |
@@ -109,7 +110,7 @@ None of these are built yet, but nothing in the design blocks them:
 | More buildings | Add a `buildings` table and `spaces.building_id`; filter by building on the page |
 | Tenant accounts / organizations | Add `tenants` / `organizations` tables; bookings already store email and company |
 | Booking limits, max lengths | Already in Settings; per-space overrides exist |
-| Approval-required spaces | Add `status = 'pending'` and an approve button. The overlap check already only counts `confirmed` |
+| Approval-required spaces | Pending bookings and the approve/decline flow already exist (for new email addresses); a per-space "always needs approval" flag would reuse them |
 | Paid bookings / external rentals | Add a price per space and a payment step before confirming |
 | Equipment, TV, catering, setup requests | Add a `booking_extras` table linked to bookings |
 | Usage analytics | The dashboard already has a stats module (`src/Stats.php`), and CSV export exists |

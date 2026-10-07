@@ -31,6 +31,9 @@ final class Ics
                 $description = "Reserved by $who" . ($b['email'] ? " <{$b['email']}>" : '') . "\nRef " . $b['ref']
                     . ($b['notes'] ? "\nNotes: " . $b['notes'] : '');
             }
+            if ($b['status'] === 'pending') {
+                $summary = 'Pending approval: ' . $summary;
+            }
             if (count($spacesById) > 1) {
                 $summary = '[' . ($space['short_name'] ?: $space['name']) . '] ' . $summary;
             }
@@ -53,7 +56,7 @@ final class Ics
             'SUMMARY:' . self::escape($summary),
             'LOCATION:' . self::escape($location . ', ' . Settings::get('org_name')),
             'DESCRIPTION:' . self::escape($description),
-            'STATUS:' . ($b['status'] === 'cancelled' ? 'CANCELLED' : 'CONFIRMED'),
+            'STATUS:' . (['cancelled' => 'CANCELLED', 'pending' => 'TENTATIVE'][$b['status']] ?? 'CONFIRMED'),
             'TRANSP:OPAQUE',
             'END:VEVENT',
         ];

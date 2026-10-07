@@ -63,12 +63,19 @@ try {
     GPC\Db::pdo();
     $line(true, 'connected to MySQL database "' . App::config('db.name') . '"');
     $tables = array_column(GPC\Db::all('SHOW TABLES'), 'Tables_in_' . App::config('db.name'));
-    $missing = array_diff(['spaces', 'bookings', 'emails', 'settings', 'admins', 'audit_log', 'rate_events'], $tables);
+    $missing = array_diff(['spaces', 'bookings', 'emails', 'settings', 'admins', 'audit_log', 'rate_events', 'email_access'], $tables);
     $line(!$missing, 'tables present' . ($missing ? ' (missing: ' . implode(', ', $missing) . ')' : ''), 'php bin/install.php');
     if (!$missing) {
         $line((int) GPC\Db::value('SELECT COUNT(*) FROM admins WHERE is_active = 1') > 0, 'at least one administrator', 'php bin/admin.php create you@example.com "Your Name"');
         $spaces = (int) GPC\Db::value('SELECT COUNT(*) FROM spaces WHERE is_active = 1');
         $line($spaces > 0, "$spaces bookable space(s)");
+        if (!$missing && str_contains((string) GPC\Db::value("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'bookings' AND COLUMN_NAME = 'status'"), "'pending'") === false) {
+            $line(false, 'database is up to date', 'sudo -u www-data php bin/install.php');
+        }
+        if (GPC\Settings::get('require_approval')) {
+            $approved = (int) GPC\Db::value("SELECT COUNT(*) FROM email_access WHERE status = 'approved'");
+            echo "  · new email addresses need approval ($approved approved entries; requests go to " . implode(', ', GPC\EmailAccess::approverEmails()) . ")\n";
+        }
         $mins = GPC\Jobs::minutesSinceLastRun();
         $line($mins !== null && $mins <= 15, 'background tasks (cron) ' . ($mins === null ? 'have never run' : "last ran $mins min ago"), 'Add the cron job from docs/DEPLOYMENT.md (step 7).');
     }

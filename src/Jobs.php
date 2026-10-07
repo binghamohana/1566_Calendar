@@ -9,11 +9,32 @@ final class Jobs
     public static function run(): array
     {
         Settings::set('cron_last_run', Time::nowDb());
+        $expired = self::expirePending();
         $reminders = self::queueReminders();
         $followups = self::queueFollowups();
         [$sent, $failed] = Mailer::sendDue(100);
         RateLimit::prune();
-        return compact('reminders', 'followups', 'sent', 'failed');
+        return compact('reminders', 'followups', 'expired', 'sent', 'failed');
+    }
+
+    /** Requests nobody approved before their start time are released. */
+    public static function expirePending(): int
+    {
+        $rows = Db::all("SELECT id FROM bookings WHERE status = 'pending' AND start_utc <= ?", [Time::nowDb()]);
+        $count = 0;
+        foreach ($rows as $row) {
+            $claimed = Db::run(
+                "UPDATE bookings SET status = 'cancelled', cancelled_at = ?, cancelled_by = 'system', cancel_reason = 'Not approved before the start time', updated_at = ?
+                  WHERE id = ? AND status = 'pending'",
+                [Time::nowDb(), Time::nowDb(), $row['id']]
+            )->rowCount();
+            if ($claimed) {
+                Audit::log((int) $row['id'], 'system', 'expired', 'Not approved before the start time');
+                Notify::expired(Bookings::find((int) $row['id']));
+                $count++;
+            }
+        }
+        return $count;
     }
 
     /** Queue "starts in about an hour" reminders. */

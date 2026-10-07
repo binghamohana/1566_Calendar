@@ -38,6 +38,7 @@ final class Stats
                 Time::dayBoundsUtc($today, $today)
             ),
             'upcoming'       => $upcoming,
+            'approvals'      => array_values(array_filter(EmailAccess::listAll(), static fn ($r) => $r['status'] === 'pending')),
             'cancellations'  => $cancellations,
             'health'         => self::health(),
         ];
@@ -91,6 +92,7 @@ final class Stats
             'cron_ok'          => $cron !== null && $cron <= 15,
             'emails_failed'    => (int) Db::value("SELECT COUNT(*) FROM emails WHERE status = 'failed' AND created_at > ?", [Time::now()->modify('-14 days')->format('Y-m-d H:i:s')]),
             'emails_pending'   => (int) Db::value("SELECT COUNT(*) FROM emails WHERE status = 'pending'"),
+            'approvals_pending' => EmailAccess::pendingCount(),
         ];
     }
 }

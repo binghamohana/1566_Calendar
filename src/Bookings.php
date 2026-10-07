@@ -8,7 +8,8 @@ use DateTimeImmutable;
 /**
  * Reservation rules and storage. Every create/change goes through lockSpaces() +
  * findConflict() inside one transaction, so the database — not the browser — guarantees
- * that a space can never hold two overlapping confirmed bookings.
+ * that a space can never hold two overlapping bookings. Pending bookings (a new email address
+ * waiting for approval) hold their time just like confirmed ones.
  */
 final class Bookings
 {
@@ -37,11 +38,14 @@ final class Bookings
         return $requestId ? self::cast(Db::one('SELECT * FROM bookings WHERE request_id = ?', [$requestId])) : null;
     }
 
-    /** Confirmed bookings overlapping the given local dates (inclusive). */
+    /** Statuses that occupy a time slot. */
+    public const ACTIVE = "('confirmed','pending')";
+
+    /** Confirmed and pending bookings overlapping the given local dates (inclusive). */
     public static function inRange(string $fromDate, string $toDate, ?int $spaceId = null): array
     {
         [$from, $to] = Time::dayBoundsUtc($fromDate, $toDate);
-        $sql = "SELECT * FROM bookings WHERE status = 'confirmed' AND start_utc < ? AND end_utc > ?";
+        $sql = 'SELECT * FROM bookings WHERE status IN ' . self::ACTIVE . ' AND start_utc < ? AND end_utc > ?';
         $params = [$to, $from];
         if ($spaceId) {
             $sql .= ' AND space_id = ?';
@@ -76,6 +80,7 @@ final class Bookings
             'start_min' => $b['start_min'],
             'end_min'   => $b['end_min'],
             'label'     => self::publicLabel($b),
+            'pending'   => $b['status'] === 'pending',
         ];
     }
 
@@ -103,7 +108,7 @@ final class Bookings
         $now = Time::now();
         $start = new DateTimeImmutable($b['start_utc'], Time::utc());
         $end = new DateTimeImmutable($b['end_utc'], Time::utc());
-        $active = $b['status'] === 'confirmed' && $b['kind'] === 'reservation';
+        $active = in_array($b['status'], ['confirmed', 'pending'], true) && $b['kind'] === 'reservation';
         return [
             'ref'        => $b['ref'],
             'status'     => $b['status'],
@@ -141,8 +146,9 @@ final class Bookings
     // ------------------------------------------------------------------ public (tenant) actions
 
     /**
-     * Create a reservation from the public booking page.
-     * Returns [booking, wasDuplicateSubmit].
+     * Create a reservation from the public booking page. The booking is 'pending' when the
+     * email address still needs the building manager's approval.
+     * Returns [booking, wasDuplicateSubmit, newApprovalRequest|null].
      */
     public static function createPublic(array $in, string $ip): array
     {
@@ -159,13 +165,24 @@ final class Bookings
         $person = self::parsePerson($in, true);
         self::checkRules($space, $date, $start, $end);
 
-        if (!Util::emailDomainAllowed($person['email'])) {
-            throw new AppError('Reservations are limited to Grove Park Collective tenants — please use your work email address.', 400, 'email');
+        // New email addresses wait for the building manager's approval (if turned on).
+        $needsApproval = Settings::get('require_approval') && !EmailAccess::isApproved($person['email']);
+        if ($needsApproval) {
+            $waiting = (int) Db::value(
+                "SELECT COUNT(*) FROM bookings WHERE email = ? AND status = 'pending' AND end_utc > ?",
+                [$person['email'], Time::nowDb()]
+            );
+            if ($waiting >= 3) {
+                throw new AppError('You already have 3 requests waiting for approval. Once building management approves your email address you can book as much as you need.', 400, 'email');
+            }
+            if (RateLimit::count("pending:$ip", 86400) >= 6) {
+                throw new AppError('Too many new email addresses from this network today. Please contact building management.', 429, null, 'rate_limited');
+            }
         }
         $maxUpcoming = (int) Settings::get('max_upcoming_per_email');
         if ($maxUpcoming > 0) {
             $upcoming = (int) Db::value(
-                "SELECT COUNT(*) FROM bookings WHERE email = ? AND status = 'confirmed' AND kind = 'reservation' AND end_utc > ?",
+                "SELECT COUNT(*) FROM bookings WHERE email = ? AND status IN " . self::ACTIVE . " AND kind = 'reservation' AND end_utc > ?",
                 [$person['email'], Time::nowDb()]
             );
             if ($upcoming >= $maxUpcoming) {
@@ -177,7 +194,7 @@ final class Bookings
             throw new AppError('Too many reservations from this network in the last hour. Please try again later or contact management.', 429, null, 'rate_limited');
         }
 
-        $result = Db::transaction(function () use ($space, $startUtc, $endUtc, $person, $requestId, $ip) {
+        $result = Db::transaction(function () use ($space, $startUtc, $endUtc, $person, $requestId, $ip, $needsApproval) {
             self::lockSpaces([$space['id']]);
             if ($requestId && ($existing = self::findByRequestId($requestId))) {
                 return [$existing, true]; // the same form was submitted twice at once
@@ -186,6 +203,7 @@ final class Bookings
             $id = self::insert($person + [
                 'space_id'   => $space['id'],
                 'kind'       => 'reservation',
+                'status'     => $needsApproval ? 'pending' : 'confirmed',
                 'start_utc'  => $startUtc,
                 'end_utc'    => $endUtc,
                 'request_id' => $requestId,
@@ -195,11 +213,20 @@ final class Bookings
             return [self::find($id), false];
         });
 
+        $newRequest = null;
         if (!$result[1]) {
             RateLimit::hit("book:$ip", PHP_INT_MAX, 3600);
-            Audit::log($result[0]['id'], $person['email'], 'created', self::summary($result[0]));
+            Audit::log($result[0]['id'], $person['email'], $needsApproval ? 'requested' : 'created', self::summary($result[0]));
+            if ($needsApproval) {
+                [$access, $isNew] = EmailAccess::request($person['email'], $person['name'], $person['company']);
+                if ($isNew) {
+                    RateLimit::hit("pending:$ip", PHP_INT_MAX, 86400);
+                    $newRequest = $access;
+                }
+            }
         }
-        return $result;
+        // [booking, duplicate submit?, new approval request (email_access row) or null]
+        return [$result[0], $result[1], $newRequest];
     }
 
     /** Change a reservation via its manage link. Returns [booking, timeOrSpaceChanged]. */
@@ -388,7 +415,7 @@ final class Bookings
             }
             if ($moved) {
                 self::lockSpaces([$space['id']]);
-                if ($booking['status'] === 'confirmed') {
+                if ($booking['status'] !== 'cancelled') {
                     self::assertNoConflict($space, $startUtc, $endUtc, $booking['id']);
                 }
                 $data += [
@@ -446,7 +473,7 @@ final class Bookings
     public static function findConflict(int $spaceId, string $startUtc, string $endUtc, ?int $ignoreId = null): ?array
     {
         return self::cast(Db::one(
-            "SELECT * FROM bookings WHERE space_id = ? AND status = 'confirmed' AND start_utc < ? AND end_utc > ? AND id <> ?
+            'SELECT * FROM bookings WHERE space_id = ? AND status IN ' . self::ACTIVE . " AND start_utc < ? AND end_utc > ? AND id <> ?
              ORDER BY start_utc LIMIT 1",
             [$spaceId, $endUtc, $startUtc, $ignoreId ?? 0]
         ));
@@ -485,7 +512,7 @@ final class Bookings
         }
         Db::run(
             "UPDATE bookings SET status = 'cancelled', cancelled_at = ?, cancelled_by = ?, cancel_reason = ?, updated_at = ?
-             WHERE status = 'confirmed' AND id IN (" . Db::in($ids) . ')',
+             WHERE status IN " . self::ACTIVE . ' AND id IN (' . Db::in($ids) . ')',
             array_merge([Time::nowDb(), $by, $reason, Time::nowDb()], $ids)
         );
     }
@@ -499,7 +526,7 @@ final class Bookings
         if ($scope !== 'following' || !$booking['series_id']) {
             return [$booking['id']];
         }
-        $sql = 'SELECT id FROM bookings WHERE series_id = ? AND start_utc >= ?' . ($confirmedOnly ? " AND status = 'confirmed'" : '');
+        $sql = 'SELECT id FROM bookings WHERE series_id = ? AND start_utc >= ?' . ($confirmedOnly ? ' AND status IN ' . self::ACTIVE : '');
         return array_map('intval', array_column(Db::all($sql, [$booking['series_id'], $booking['start_utc']]), 'id'));
     }
 

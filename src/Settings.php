@@ -35,7 +35,8 @@ final class Settings
         'max_days_ahead'         => ['int', 120, [1, 730]],
         'min_notice_minutes'     => ['int', 0, [0, 10080]],
         'max_upcoming_per_email' => ['int', 25, [0, 1000]],   // 0 = unlimited
-        'allowed_email_domains'  => ['string', ''],            // e.g. "acme.com, example.org"; blank = anyone
+        'require_approval'       => ['bool', true],            // new email addresses need the building manager's OK
+        'approval_emails'        => ['string', ''],            // who approves; blank = management email, else all admins
         'rate_limit_per_hour'    => ['int', 30, [1, 1000]],    // new bookings per IP address per hour (tenants may share one office IP)
 
         // Emails

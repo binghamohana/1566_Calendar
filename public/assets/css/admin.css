@@ -28,6 +28,8 @@ body.admin { background: var(--bg); }
 .side a.nav:hover { background: var(--sand); color: var(--ink); }
 .side a.nav.active { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-sm); }
 .side a.nav.active svg { color: var(--brand); }
+.nav-badge { margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 11.5px; font-weight: 700; display: inline-grid; place-items: center; }
+.mobile-nav .nav-badge { margin-left: 6px; }
 .side-foot { margin-top: auto; padding: 12px 10px 0; border-top: 1px solid var(--line-soft); font-size: 13px; color: var(--muted); display: flex; flex-direction: column; gap: 8px; }
 .side-foot strong { color: var(--ink); font-weight: 600; display: block; }
 .side-foot .links { display: flex; gap: 12px; flex-wrap: wrap; }
@@ -72,6 +74,15 @@ body.admin { background: var(--bg); }
 .li-main { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .li-sub { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sw-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--c); margin-right: 6px; vertical-align: 1px; }
+
+/* ---------- Approval requests ---------- */
+.approval { padding: 14px 0; border-top: 1px solid var(--line-soft); }
+.approval:first-of-type { border-top: 0; padding-top: 2px; }
+.ap-head { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; margin-bottom: 6px; }
+.ap-head strong { font-size: 15.5px; }
+.ap-head span { font-size: 13.5px; color: var(--ink-2); }
+.ap-head .muted { color: var(--muted); }
+.ap-list { list-style: none; margin: 4px 0 12px; padding: 0; font-size: 13.5px; color: var(--ink-2); display: flex; flex-direction: column; gap: 3px; }
 
 .health { display: flex; flex-direction: column; gap: 10px; font-size: 14px; }
 .health-row { display: flex; gap: 10px; align-items: flex-start; }

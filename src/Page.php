@@ -38,6 +38,7 @@ final class Page
                 'min_duration_minutes' => $s['min_duration_minutes'],
                 'max_duration_minutes' => $s['max_duration_minutes'],
                 'max_days_ahead'       => $s['max_days_ahead'],
+                'require_approval'     => $s['require_approval'],
             ],
             'spaces'        => array_map([Spaces::class, 'publicView'], Spaces::all(true)),
             'manage_token'  => $manageToken,

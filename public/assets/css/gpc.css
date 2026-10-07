@@ -361,6 +361,7 @@ main { flex: 1; width: 100%; }
 .legend .l-free { background: var(--surface); border: 1px solid var(--line); }
 .legend .l-res { background: color-mix(in srgb, var(--brand-2) 22%, white); border-left: 3px solid var(--brand-2); }
 .legend .l-mine { background: var(--brand); }
+.legend .l-pending { background: color-mix(in srgb, var(--brand-2) 18%, white); border-left: 3px dashed var(--brand-2); }
 .legend .l-na { background: repeating-linear-gradient(135deg, #D9D3C9 0 2px, #EFEAE2 2px 5px); }
 .cal-hint { margin-left: auto; font-weight: 500; color: var(--ink-2); }
 
@@ -431,6 +432,8 @@ button.cal-colhead:hover .ch-title { color: var(--brand); text-decoration: under
 .cal-ev.is-tiny { padding: 0 6px; font-size: 11px; }
 .cal-ev.is-block { background: repeating-linear-gradient(135deg, #E6E1D8 0 3px, #F1EDE6 3px 7px); color: var(--ink-2); border-left-color: #A9A297; }
 .cal-ev.is-mine { background: var(--c); color: #fff; border-left-color: rgba(0, 0, 0, .28); cursor: pointer; box-shadow: 0 4px 14px rgba(29, 36, 32, .22); }
+.cal-ev.is-pending { border-left-style: dashed; background-image: repeating-linear-gradient(135deg, rgba(255, 255, 255, .55) 0 4px, transparent 4px 9px); }
+.cal-ev.is-mine.is-pending { background-color: color-mix(in srgb, var(--c) 70%, white); }
 .cal-ev.is-clickable { cursor: pointer; }
 .cal-ev.is-clickable:hover { filter: brightness(.97); box-shadow: var(--shadow); }
 .cal-ev.is-current { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -487,6 +490,8 @@ button.cal-colhead:hover .ch-title { color: var(--brand); text-decoration: under
 .badge.cancelled { background: var(--danger-soft); color: var(--danger); }
 .badge.past { background: var(--sand); color: var(--ink-2); }
 .badge.block { background: var(--sand); color: var(--ink-2); }
+.badge.pending { background: var(--warn-soft); color: var(--warn); }
+.confirm-icon.is-pending { background: var(--warn-soft); color: var(--warn); }
 .section-title { font-family: var(--display); font-size: 28px; margin: 0 0 12px; }
 
 .empty { text-align: center; padding: 48px 20px; color: var(--muted); }

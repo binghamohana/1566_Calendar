@@ -76,7 +76,7 @@
         var a = Math.max(ev.start, s0), b = Math.min(ev.end, s1);
         if (b <= a) return;
         var dur = b - a;
-        var cls = 'cal-ev' + (ev.kind === 'block' ? ' is-block' : '') + (ev.mine ? ' is-mine' : '') +
+        var cls = 'cal-ev' + (ev.kind === 'block' ? ' is-block' : '') + (ev.mine ? ' is-mine' : '') + (ev.pending ? ' is-pending' : '') +
           (ev.current ? ' is-current' : '') + (ev.clickable || ev.mine ? ' is-clickable' : '') +
           (dur < 45 ? ' is-short' : '') + (dur < 25 ? ' is-tiny' : '');
         var time = GPC.time.range(ev.start, ev.end);

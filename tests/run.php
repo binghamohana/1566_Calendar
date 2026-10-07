@@ -64,7 +64,7 @@ function reset_db(): void
 {
     $pdo = Db::pdo();
     $pdo->exec('SET FOREIGN_KEY_CHECKS = 0');
-    foreach (['bookings', 'emails', 'settings', 'audit_log', 'rate_events', 'admins', 'spaces'] as $t) {
+    foreach (['bookings', 'emails', 'settings', 'audit_log', 'rate_events', 'admins', 'spaces', 'email_access'] as $t) {
         $pdo->exec("TRUNCATE TABLE $t");
     }
     $pdo->exec('SET FOREIGN_KEY_CHECKS = 1');
@@ -74,6 +74,7 @@ function reset_db(): void
         Db::insert('spaces', ['slug' => $slug, 'name' => $name, 'sort_order' => $i, 'created_at' => $now, 'updated_at' => $now]);
     }
     Db::insert('admins', ['email' => 'boss@example.com', 'name' => 'Boss', 'password_hash' => 'x', 'created_at' => $now]);
+    Settings::set('require_approval', false); // the approval section turns it on
 }
 function book(array $over = [], string $ip = '10.0.0.1'): array
 {
@@ -88,6 +89,7 @@ $schema = file_get_contents(GPC_ROOT . '/sql/schema.sql');
 foreach (array_filter(array_map('trim', preg_split('/;\s*\n/', preg_replace('/^--.*$/m', '', $schema)))) as $sql) {
     Db::pdo()->exec($sql);
 }
+GPC\Migrations::run();
 $admin = ['id' => 1, 'email' => 'boss@example.com'];
 
 // ---------------------------------------------------------------------------
@@ -150,11 +152,6 @@ Db::update('spaces', ['is_active' => 0], 'id = 3', []);
 check('rejects bookings for a disabled space', expectError(fn () => book(['space_id' => 3, 'date' => '2026-10-20'], '10.0.1.1'), null, 'space_id') !== null);
 Db::update('spaces', ['is_active' => 1], 'id = 3', []);
 
-Settings::set('allowed_email_domains', 'acme.com, tenant.org');
-check('email domain allow-list blocks other domains', expectError(fn () => book(['date' => '2026-10-21', 'email' => 'x@gmail.com'], '10.0.1.2'), null, 'email') !== null);
-check('email domain allow-list accepts tenant domains', book(['date' => '2026-10-21', 'email' => 'x@tenant.org'], '10.0.1.2')['status'] === 'confirmed');
-Settings::set('allowed_email_domains', '');
-
 Settings::set('rate_limit_per_hour', 2);
 book(['date' => '2026-10-22', 'start' => '08:00', 'end' => '09:00'], '10.9.9.9');
 book(['date' => '2026-10-22', 'start' => '09:00', 'end' => '10:00'], '10.9.9.9');
@@ -208,6 +205,78 @@ $deleted = Bookings::adminDelete($block['bookings'][0]['id'], 'one', $admin);
 check('admin can delete a booking outright', $deleted === 1 && Bookings::find($block['bookings'][0]['id']) === null);
 $monthly = Bookings::adminCreate(['kind' => 'block', 'space_ids' => [3], 'date' => '2026-10-31', 'start' => '09:00', 'end' => '10:00', 'repeat' => 'monthly', 'repeat_until' => '2027-03-31'], $admin);
 check('monthly repeats skip months without that date (31st)', array_column($monthly['bookings'], 'date') === ['2026-10-31', '2026-12-31', '2027-01-31', '2027-03-31']);
+
+// ---------------------------------------------------------------------------
+echo "\nApproval of new email addresses\n";
+reset_db();
+freeze('2026-10-07 16:00:00');
+Settings::set('require_approval', true);
+Settings::set('approval_emails', 'manager@gpc.example');
+check('normalizes entries', GPC\EmailAccess::normalize(' Jane@Acme.com ') === 'jane@acme.com'
+    && GPC\EmailAccess::normalize('ACME.com') === '@acme.com' && GPC\EmailAccess::normalize('@acme.com') === '@acme.com'
+    && GPC\EmailAccess::normalize('not an email') === null);
+$added = GPC\EmailAccess::add(['@acme.com', 'solo@freelance.com', 'nonsense'], 'boss');
+check('adds addresses and domains, reports invalid ones', count($added['added']) === 2 && $added['invalid'] === ['nonsense']);
+$ok1 = book(['date' => '2026-10-20', 'start' => '09:00', 'end' => '10:00', 'email' => 'sam@acme.com'], '10.2.0.1');
+$ok2 = book(['date' => '2026-10-20', 'start' => '10:00', 'end' => '11:00', 'email' => 'kim@mail.acme.com'], '10.2.0.1');
+$ok3 = book(['date' => '2026-10-20', 'start' => '11:00', 'end' => '12:00', 'email' => 'solo@freelance.com'], '10.2.0.1');
+$ok4 = book(['date' => '2026-10-20', 'start' => '12:00', 'end' => '13:00', 'email' => 'boss@example.com'], '10.2.0.1');
+check('approved address, approved domain (and subdomain) and admins book instantly',
+    $ok1['status'] === 'confirmed' && $ok2['status'] === 'confirmed' && $ok3['status'] === 'confirmed' && $ok4['status'] === 'confirmed');
+
+[$p1, , $req1] = Bookings::createPublic(['space_id' => 2, 'date' => '2026-10-20', 'start' => '09:00', 'end' => '10:00', 'name' => 'Nia New', 'email' => 'nia@newco.com', 'company' => 'NewCo'], '10.2.0.2');
+check('unknown address → pending, with a new approval request', $p1['status'] === 'pending' && $req1 && $req1['status'] === 'pending' && strlen($req1['token']) === 48);
+check('a pending request holds its time slot', expectError(fn () => book(['space_id' => 2, 'date' => '2026-10-20', 'start' => '09:30', 'end' => '10:30', 'email' => 'sam@acme.com'], '10.2.0.1'), 'conflict') !== null);
+check('the public calendar marks it pending (no email shown)', Bookings::publicView($p1)['pending'] === true && !isset(Bookings::publicView($p1)['email']));
+[$p2, , $req2] = Bookings::createPublic(['space_id' => 2, 'date' => '2026-10-21', 'start' => '09:00', 'end' => '10:00', 'name' => 'Nia New', 'email' => 'nia@newco.com'], '10.2.0.2');
+check('a second booking joins the same request (manager not emailed twice)', $p2['status'] === 'pending' && $req2 === null);
+Bookings::createPublic(['space_id' => 2, 'date' => '2026-10-22', 'start' => '09:00', 'end' => '10:00', 'name' => 'Nia New', 'email' => 'nia@newco.com'], '10.2.0.2');
+check('at most 3 requests can wait at once', expectError(fn () => Bookings::createPublic(['space_id' => 2, 'date' => '2026-10-23', 'start' => '09:00', 'end' => '10:00', 'name' => 'Nia', 'email' => 'nia@newco.com'], '10.2.0.2'), null, 'email') !== null);
+$mailIds = GPC\Notify::approvalRequest($req1);
+check('the approval request goes to the configured manager', (string) Db::value('SELECT to_email FROM emails WHERE id = ?', [$mailIds[0]]) === 'manager@gpc.example'
+    && str_contains((string) Db::value('SELECT body_text FROM emails WHERE id = ?', [$mailIds[0]]), 'approve.php?t=' . $req1['token']));
+check('no reminders are sent for pending requests', (function () { freeze('2026-10-20 12:30:00'); $n = Jobs::queueReminders(); freeze('2026-10-07 16:00:00'); return $n === 1; })());
+
+$approved = GPC\EmailAccess::approve(GPC\EmailAccess::findByToken($req1['token']), 'boss');
+check('approving confirms every waiting reservation', count($approved['confirmed']) === 3 && Bookings::find($p1['id'])['status'] === 'confirmed');
+check('…and adds the address to the approved list', GPC\EmailAccess::isApproved('nia@newco.com') && GPC\EmailAccess::findByToken($req1['token']) === null);
+check('…so the next booking is confirmed instantly', book(['date' => '2026-10-27', 'email' => 'nia@newco.com'], '10.2.0.2')['status'] === 'confirmed');
+
+[, , $reqJ] = Bookings::createPublic(['space_id' => 3, 'date' => '2026-10-20', 'start' => '09:00', 'end' => '10:00', 'name' => 'Jo', 'email' => 'jo@bigco.com'], '10.2.0.3');
+$approvedDomain = GPC\EmailAccess::approve($reqJ, 'boss', true);
+check('approving “everyone at @bigco.com” approves colleagues too', $approvedDomain['pattern'] === '@bigco.com' && GPC\EmailAccess::isApproved('bob@bigco.com'));
+[$w1] = Bookings::createPublic(['space_id' => 3, 'date' => '2026-10-23', 'start' => '09:00', 'end' => '10:00', 'name' => 'Ann', 'email' => 'ann@teamco.com'], '10.2.0.7');
+[$w2, , $reqW2] = Bookings::createPublic(['space_id' => 3, 'date' => '2026-10-23', 'start' => '10:00', 'end' => '11:00', 'name' => 'Ben', 'email' => 'ben@teamco.com'], '10.2.0.7');
+$teamApproved = GPC\EmailAccess::approve($reqW2, 'boss', true);
+check('approving a whole company also confirms colleagues already waiting', count($teamApproved['confirmed']) === 2
+    && Bookings::find($w1['id'])['status'] === 'confirmed' && GPC\EmailAccess::findByPattern('ann@teamco.com')['status'] === 'approved');
+[$w3] = Bookings::createPublic(['space_id' => 3, 'date' => '2026-10-24', 'start' => '09:00', 'end' => '10:00', 'name' => 'Cy', 'email' => 'cy@later.co'], '10.2.0.8');
+$viaList = GPC\EmailAccess::add(['@later.co'], 'boss');
+check('adding @domain to the list confirms anyone from it already waiting', count($viaList['confirmed']) === 1 && Bookings::find($w3['id'])['status'] === 'confirmed');
+[, , $reqG] = Bookings::createPublic(['space_id' => 3, 'date' => '2026-10-20', 'start' => '10:00', 'end' => '11:00', 'name' => 'G', 'email' => 'g.user@gmail.com'], '10.2.0.4');
+$approvedG = GPC\EmailAccess::approve($reqG, 'boss', true);
+check('…but never a public domain like gmail.com', $approvedG['pattern'] === 'g.user@gmail.com' && !GPC\EmailAccess::isApproved('someone.else@gmail.com'));
+
+[$sp, , $reqS] = Bookings::createPublic(['space_id' => 3, 'date' => '2026-10-21', 'start' => '09:00', 'end' => '10:00', 'name' => 'Spam', 'email' => 'spam@bad.example'], '10.2.0.5');
+$declined = GPC\EmailAccess::decline($reqS, 'boss', 'Not a tenant');
+check('declining cancels and releases the held time', count($declined) === 1 && Bookings::find($sp['id'])['status'] === 'cancelled'
+    && Bookings::find($sp['id'])['cancel_reason'] === 'Not a tenant'
+    && book(['space_id' => 3, 'date' => '2026-10-21', 'start' => '09:00', 'end' => '10:00', 'email' => 'sam@acme.com'], '10.2.0.1')['status'] === 'confirmed');
+[$sp2, , $reqS2] = Bookings::createPublic(['space_id' => 3, 'date' => '2026-10-22', 'start' => '09:00', 'end' => '10:00', 'name' => 'Spam', 'email' => 'spam@bad.example'], '10.2.0.5');
+check('a declined address that tries again needs approval again', $sp2['status'] === 'pending' && $reqS2 !== null);
+check('a pending entry cannot simply be removed', expectError(fn () => GPC\EmailAccess::remove((int) $reqS2['id'], 'boss')) !== null);
+
+freeze('2026-10-22 13:05:00'); // 9:05 AM local on the 22nd — the spam request has started, unapproved
+$res = Jobs::run();
+check('unanswered requests are released when they start', $res['expired'] === 1 && Bookings::find($sp2['id'])['status'] === 'cancelled'
+    && (int) Db::value("SELECT COUNT(*) FROM emails WHERE type = 'expired' AND booking_id = ?", [$sp2['id']]) === 1);
+Settings::set('require_approval', false);
+check('turning approval off lets anyone book instantly again', book(['date' => '2026-10-28', 'email' => 'anyone@else.example'], '10.2.0.6')['status'] === 'confirmed');
+
+Db::run("INSERT INTO settings (name, value) VALUES ('allowed_email_domains', 'tenant.org, other.org')");
+GPC\Migrations::run();
+check('upgrade moves the old allowed-domains setting into the approved list', GPC\EmailAccess::isApproved('a@tenant.org') && GPC\EmailAccess::isApproved('b@other.org')
+    && Db::value("SELECT COUNT(*) FROM settings WHERE name = 'allowed_email_domains'") == 0);
 
 // ---------------------------------------------------------------------------
 echo "\nAutomated emails\n";

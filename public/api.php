@@ -53,9 +53,15 @@ Http::handle(function (): void {
 
         case 'POST book':
             FormToken::check($in);
-            [$booking, $duplicate] = Bookings::createPublic($in, Http::ip());
+            [$booking, $duplicate, $approvalRequest] = Bookings::createPublic($in, Http::ip());
             $emailIds = [];
-            if (!$duplicate) {
+            if (!$duplicate && $booking['status'] === 'pending') {
+                // New email address: tell the tenant it's held, and (once per address) ask the manager.
+                $emailIds[] = Notify::pendingReceived($booking);
+                if ($approvalRequest) {
+                    $emailIds = array_merge($emailIds, Notify::approvalRequest($approvalRequest));
+                }
+            } elseif (!$duplicate) {
                 $emailIds[] = Notify::confirmation($booking);
                 $emailIds = array_merge($emailIds, Notify::admins($booking, 'new'));
             }
@@ -98,7 +104,7 @@ Http::handle(function (): void {
                 throw new AppError('We’ve already sent a few emails. Please check your inbox (and spam folder) or try again later.', 429);
             }
             $rows = Db::all(
-                "SELECT id FROM bookings WHERE email = ? AND status = 'confirmed' AND kind = 'reservation' AND end_utc > ? ORDER BY start_utc LIMIT 25",
+                'SELECT id FROM bookings WHERE email = ? AND status IN ' . Bookings::ACTIVE . " AND kind = 'reservation' AND end_utc > ? ORDER BY start_utc LIMIT 25",
                 [$email, Time::nowDb()]
             );
             $emailId = null;

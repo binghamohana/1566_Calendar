@@ -22,6 +22,32 @@ Sign in with your admin email and password. Sessions last 14 days per device.
 | Export | **Reservations → Export CSV** (follows the current filters) |
 | Give a tenant their link again | Open the booking → **Manage link → Copy**. Tenants can also use "Find my reservations" on the public page |
 
+## Approved emails (who can book instantly)
+
+New email addresses need the building manager's OK once. After that, that person always books instantly.
+
+- **Admin → Approved emails** holds the list. Add tenants ahead of time, one per line:
+  - an address — `jane@acme.com`
+  - a whole tenant company — `@acme.com` (also covers `@mail.acme.com`)
+
+  Don't add public domains like `@gmail.com`; approve those people individually.
+  Administrators are always approved.
+- **Someone not on the list books:** their reservation is saved as **pending** and holds the time
+  (others see "Pending" on the calendar). They see and receive "Request received — awaiting approval".
+- **The manager gets an email** ("Approval needed") with a **Review & approve** button that opens a page
+  showing who it is and what they booked. Choose:
+  - **Approve**: adds the address to the list, confirms everything they have waiting, and emails them
+    the normal confirmation. Tick **Also approve everyone at @theircompany.com** to approve their colleagues too.
+  - **Decline**: releases the held time and emails them (with your optional reason). If they try again,
+    you get a new request.
+- **Never answered?** A pending request is released automatically when its start time arrives, and the
+  person is told.
+- The same Approve / Decline buttons appear on the admin **Dashboard** ("Waiting for your approval"),
+  in **Approved emails**, and on the pending booking itself. The menu shows a badge with the number waiting.
+- Each address can have at most 3 requests waiting; only one approval email is sent per address.
+- **Settings → Booking rules**: turn **Require approval for new email addresses** off to let anyone book
+  instantly, and set **Send approval requests to** (blank = the management email, or every administrator).
+
 ## Spaces
 
 **Spaces → Add space / Edit**
@@ -45,7 +71,7 @@ Sign in with your admin email and password. Sessions last 14 days per device.
   company or meeting title. Email addresses are never shown publicly.
 - **Booking rules:** time steps (15 min), shortest/longest booking (default 12 h), how far ahead
   (default 120 days), minimum notice, max upcoming bookings per person (25), bookings per network
-  per hour (30), optional allowed email domains (e.g. only tenant company domains).
+  per hour (30), and whether new email addresses need approval (see above).
 - **Automated emails:** reminder on/off and lead time (default 60 min before), after-use note
   on/off and timing (default at the end time), the cleanup message, building info for reminders,
   and optional copies of new bookings/cancellations to management. **Send test email** checks
@@ -63,6 +89,8 @@ Sign in with your admin email and password. Sessions last 14 days per device.
 3. **After-use note**, at the end time: "Thanks for using the … please leave the room the way you
    found it…".
 4. **Updated** / **Cancelled** notices when a booking changes.
+5. For new email addresses: **Request received** (awaiting approval), then **Confirmed** when approved,
+   or **Not approved** / **Request expired**.
 
 All emails are listed in **Email log** with their status.
 
@@ -88,6 +116,8 @@ sudo -u www-data php bin/admin.php create someone@example.com "Their Name"
 | Dashboard says **Email is in test mode** | `mail.transport` is `log` in config.php; set it to `smtp` |
 | Page says "temporarily unavailable" | Database is down or config is wrong: `sudo -u www-data php bin/check.php`; details in `storage/logs/php-error.log` |
 | A tenant says "too many reservations" | Raise **bookings per network per hour** (everyone in the building may share one internet address) or **max upcoming per person** |
+| A tenant says their booking is "awaiting approval" | Their email isn't on the approved list yet. Approve it from the email request, the Dashboard or **Approved emails**. Add tenant domains there to avoid this |
+| The manager isn't getting approval emails | **Settings → Booking rules → Send approval requests to**; then check the **Email log** for `approval_request` rows |
 | A tenant lost their link | Open their booking → copy the Manage link, or have them use **Find my reservations** |
 | Times look an hour off | **Settings → Time zone** should be `America/New_York` |
 | Photo upload fails | `public/uploads/spaces` must be writable by www-data: `sudo chown -R www-data /var/www/gpc-reserve/public/uploads` |

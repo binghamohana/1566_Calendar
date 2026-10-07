@@ -60,6 +60,9 @@
     });
     $form.find('[name=date]').attr({ min: boot.today, max: GPC.date.addDays(boot.today, maxAhead()) });
 
+    if (!edit && boot.rules.require_approval) {
+      $form.find('.bf-email-field').closest('.row').after('<div class="field-hint" style="margin:-6px 0 14px">Use your work email. New addresses are approved once by building management — until then your time is held for you.</div>');
+    }
     if (edit) {
       var b = opts.booking;
       $form.find('[name=name]').val(b.name);
@@ -269,17 +272,27 @@
       ];
       if (bk.title) rows.push(['Title', bk.title]);
       rows.push(['Reference', bk.ref]);
+      var pending = bk.status === 'pending';
+      if (pending) rows.push(['Status', 'Awaiting approval']);
       var $c = $('<div class="confirm"></div>');
-      $c.append('<div class="confirm-icon">' + GPC.icon('check') + '</div>');
-      $c.append($('<h3></h3>').text(edit ? 'Your reservation is updated.' : 'Your reservation is confirmed.'));
-      $c.append($('<p></p>').text('A confirmation is on its way to ' + bk.email + '. It includes a link to change or cancel.'));
+      $c.append('<div class="confirm-icon' + (pending ? ' is-pending' : '') + '">' + GPC.icon(pending ? 'clock' : 'check') + '</div>');
+      if (pending) {
+        $c.append($('<h3></h3>').text(edit ? 'Your request is updated.' : 'Request received.'));
+        $c.append($('<p></p>').text(B().org_name + ' approves each new email address once. We’ve asked building management to approve ' + bk.email +
+          ' — you’ll get a confirmation email as soon as they do. Your time is held for you until then.'));
+      } else {
+        $c.append($('<h3></h3>').text(edit ? 'Your reservation is updated.' : 'Your reservation is confirmed.'));
+        $c.append($('<p></p>').text('A confirmation is on its way to ' + bk.email + '. It includes a link to change or cancel.'));
+      }
       var $t = $('<div class="ticket"></div>');
       rows.forEach(function (r) { $t.append($('<div class="ticket-row"></div>').append($('<span></span>').text(r[0]), $('<strong></strong>').text(r[1]))); });
       $c.append($t);
       var $acts = $('<div class="confirm-actions"></div>');
-      $acts.append($('<a class="btn btn-ghost btn-sm" download></a>').attr('href', 'ics.php?t=' + encodeURIComponent(bk.manage_token)).html(GPC.icon('cal') + ' Add to calendar'));
-      $acts.append($('<a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"></a>').attr('href', GPC.googleCalUrl(bk, space)).text('Google Calendar'));
-      $acts.append($('<a class="btn btn-ghost btn-sm"></a>').attr('href', 'manage.php?t=' + encodeURIComponent(bk.manage_token)).text('Manage reservation'));
+      if (!pending) {
+        $acts.append($('<a class="btn btn-ghost btn-sm" download></a>').attr('href', 'ics.php?t=' + encodeURIComponent(bk.manage_token)).html(GPC.icon('cal') + ' Add to calendar'));
+        $acts.append($('<a class="btn btn-ghost btn-sm" target="_blank" rel="noopener"></a>').attr('href', GPC.googleCalUrl(bk, space)).text('Google Calendar'));
+      }
+      $acts.append($('<a class="btn btn-ghost btn-sm"></a>').attr('href', 'manage.php?t=' + encodeURIComponent(bk.manage_token)).text(pending ? 'View or cancel request' : 'Manage reservation'));
       $c.append($acts);
       dlg.setTitle('', '');
       dlg.$body.empty().append($c);

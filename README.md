@@ -20,6 +20,9 @@ simple admin area for reservations, blocks, rooms, rules and email.
 - Confirmation with Add-to-calendar (.ics and Google Calendar) and a private **Manage
   reservation** link: change time, change room or cancel, with no password.
 - "Find my reservations": emails fresh manage links if the confirmation is lost.
+- New email addresses are approved once by the building manager: the booking is held as
+  "pending", the manager approves or declines from an email link, and approved people (or whole
+  tenant companies, e.g. `@acme.com`) book instantly from then on.
 
 **For management** (`/book/admin/`)
 - Dashboard: today, this week, this month, booked hours, most-used space, upcoming, recent
@@ -27,6 +30,8 @@ simple admin area for reservations, blocks, rooms, rules and email.
 - Calendar with full details. Create, edit, cancel or delete reservations; block a room, several
   rooms or a whole day; repeating bookings and blocks with conflict reporting.
 - Reservation search, filters, CSV export, per-booking history and email log.
+- Approved emails: the list of addresses and tenant domains that book instantly, plus pending
+  requests with one-click Approve / Approve whole company / Decline.
 - Spaces: add, rename, describe, photo, color, weekly hours, per-room rules and instructions,
   disable, reorder.
 - Settings: privacy of the public calendar, booking rules, email timing and wording, staff
@@ -36,8 +41,8 @@ simple admin area for reservations, blocks, rooms, rules and email.
 - Double booking is impossible: the database checks for overlaps and saves in one locked
   transaction (tested with 12 simultaneous requests).
 - Emails go through an outbox with automatic retries. A booking never fails because email did.
-- Spam protection that tenants don't notice: honeypot, signed form token, rate limits, optional
-  tenant-domain allow-list.
+- Spam protection that tenants don't notice: honeypot, signed form token and rate limits, plus
+  manager approval for email addresses not already on the approved list.
 - Designed for phones first, then tablets and desktops. No build step and no third-party scripts, fonts or trackers.
 
 ## The documentation the brief asked for

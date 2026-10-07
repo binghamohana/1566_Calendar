@@ -130,7 +130,7 @@ Send a test from **Admin → Settings → Send test email**.
 ```bash
 cd /var/www/gpc-reserve
 sudo git pull
-sudo -u www-data php bin/install.php      # applies any new tables; safe to re-run
+sudo -u www-data php bin/install.php      # applies new tables and database updates; safe to re-run
 sudo -u www-data php bin/check.php
 ```
 

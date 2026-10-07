@@ -73,20 +73,4 @@ final class Util
             && filter_var($email, FILTER_VALIDATE_EMAIL) !== false
             && preg_match('/@[^.@]+(\.[^.@]+)+$/', $email) === 1;
     }
-
-    public static function emailDomainAllowed(string $email): bool
-    {
-        $list = trim((string) Settings::get('allowed_email_domains'));
-        if ($list === '') {
-            return true;
-        }
-        $domain = strtolower(substr(strrchr($email, '@') ?: '', 1));
-        foreach (preg_split('/[\s,;]+/', strtolower($list)) as $allowed) {
-            $allowed = ltrim($allowed, '@');
-            if ($allowed !== '' && ($domain === $allowed || str_ends_with($domain, '.' . $allowed))) {
-                return true;
-            }
-        }
-        return false;
-    }
 }

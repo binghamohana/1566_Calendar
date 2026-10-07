@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS bookings (
   ref               VARCHAR(10)  NOT NULL COMMENT 'Human-friendly reference code',
   space_id          INT UNSIGNED NOT NULL,
   kind              ENUM('reservation','block') NOT NULL DEFAULT 'reservation',
-  status            ENUM('confirmed','cancelled') NOT NULL DEFAULT 'confirmed',
+  status            ENUM('pending','confirmed','cancelled') NOT NULL DEFAULT 'confirmed' COMMENT 'pending = waiting for approval of a new email address',
   start_utc         DATETIME     NOT NULL,
   end_utc           DATETIME     NOT NULL,
   title             VARCHAR(150) NULL,
@@ -64,6 +64,27 @@ CREATE TABLE IF NOT EXISTS bookings (
   KEY idx_bookings_email (email),
   KEY idx_bookings_series (series_id),
   CONSTRAINT fk_bookings_space FOREIGN KEY (space_id) REFERENCES spaces (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Who may book without approval: exact addresses ("jane@acme.com") or whole domains ("@acme.com").
+-- Unknown addresses that book become 'pending' rows the building manager approves or declines.
+CREATE TABLE IF NOT EXISTS email_access (
+  id            INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  pattern       VARCHAR(190) NOT NULL,
+  status        ENUM('approved','pending','declined') NOT NULL DEFAULT 'approved',
+  name          VARCHAR(120) NULL,
+  company       VARCHAR(150) NULL,
+  note          VARCHAR(255) NULL,
+  token         VARCHAR(64)  NULL COMMENT 'Secret for the approve/decline link',
+  requested_at  DATETIME     NULL,
+  decided_at    DATETIME     NULL,
+  decided_by    VARCHAR(190) NULL,
+  created_at    DATETIME     NOT NULL,
+  updated_at    DATETIME     NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_email_access_pattern (pattern),
+  UNIQUE KEY uq_email_access_token (token),
+  KEY idx_email_access_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS emails (

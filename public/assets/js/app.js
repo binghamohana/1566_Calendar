@@ -180,6 +180,8 @@
     mode = space ? (mode || (wide ? 'week' : 'day')) : 'day';
     if (!wide) mode = 'day';
     var sameView = state.view === 'calendar' && state.space === space && state.mode === mode;
+    // Moving between days in the same view keeps your place in the day instead of jumping to midnight.
+    var keepTop = sameView && cal ? cal.$scroll.scrollTop() : null;
     state.view = 'calendar'; state.space = space; state.date = date; state.mode = mode;
     document.title = (space ? space.name : 'All spaces') + ' · ' + boot.org_name;
 
@@ -246,7 +248,9 @@
       $info.append($('<strong></strong>').text(space.name), $('<span class="si-meta"></span>').text(
         [space.location, space.capacity ? 'Up to ' + space.capacity + ' people' : null, GPC.hoursSummary(space)].filter(Boolean).join(' · ')));
     }
-    var $legend = $('<div class="legend"><span><i class="l-free"></i>Open</span><span><i class="l-res"></i>Reserved</span><span><i class="l-mine"></i>Yours</span><span><i class="l-na"></i>Unavailable</span></div>');
+    var $legend = $('<div class="legend"><span><i class="l-free"></i>Open</span><span><i class="l-res"></i>Reserved</span>' +
+      (boot.rules.require_approval ? '<span><i class="l-pending"></i>Pending</span>' : '') +
+      '<span><i class="l-mine"></i>Yours</span><span><i class="l-na"></i>Unavailable</span></div>');
     $legend.append($('<span class="cal-hint"></span>').text('Click an open time — or drag — to reserve'));
     $info.append($('<span style="flex:1"></span>'), $legend);
     $page.append($info);
@@ -269,7 +273,7 @@
     });
     var from = mode === 'week' ? weekStart : date, to = mode === 'week' ? GPC.date.addDays(weekStart, 6) : date;
     state.range = [from, to];
-    drawCalendar(true, !sameView);
+    drawCalendar(true, keepTop === null ? true : keepTop);
   }
 
   function columnsFor() {
@@ -296,6 +300,7 @@
     return cols;
   }
 
+  /** scroll: true = jump to a sensible time, false = keep position, a number = restore that scrollTop. */
   function drawCalendar(fetch, scroll) {
     if (!cal) return;
     var cols = columnsFor(), myRefs = mine();
@@ -310,7 +315,8 @@
         var sp = spaceById(b.space_id);
         events.push({
           col: col.key, start: b.start_min, end: b.end_min, kind: b.kind,
-          title: m ? 'Your reservation' : b.label, mine: m ? m.t : null, color: sp ? sp.color : null
+          title: m ? (b.pending ? 'Your request · awaiting approval' : 'Your reservation') : (b.pending ? 'Pending · ' + b.label : b.label),
+          mine: m ? m.t : null, pending: b.pending, color: sp ? sp.color : null
         });
       });
       // Visible hours: the union of opening hours (always-open spaces show the full day).
@@ -322,8 +328,10 @@
       cal.render({
         columns: cols, events: events, today: boot.today, nowMin: boot.nowMin, range: [lo, hi],
         colMin: state.space ? (state.mode === 'week' ? 0 : 0) : (cols.length > 3 && GPC.isMobile() ? 110 : 0)
-      }, !scroll);
-      if (scroll) {
+      }, scroll === false);
+      if (typeof scroll === 'number') {
+        cal.$scroll.scrollTop(scroll);
+      } else if (scroll) {
         var showsToday = cols.some(function (c) { return c.date === boot.today; });
         cal.scrollToMin(Math.max(lo, showsToday ? Math.min(boot.nowMin - 60, 17 * 60) : 7 * 60));
       }
@@ -386,7 +394,8 @@
   function drawManage(first) {
     var b = managed, space = spaceById(b.space_id) || { name: b.space_name, color: '#3E5C4A', hours: null };
     var badge = b.status === 'cancelled' ? '<span class="badge cancelled">Cancelled</span>'
-      : (b.is_past ? '<span class="badge past">Completed</span>' : '<span class="badge ok">' + GPC.icon('check').replace('<svg', '<svg width="12" height="12"') + ' Confirmed</span>');
+      : (b.status === 'pending' ? '<span class="badge pending">Awaiting approval</span>'
+      : (b.is_past ? '<span class="badge past">Completed</span>' : '<span class="badge ok">' + GPC.icon('check').replace('<svg', '<svg width="12" height="12"') + ' Confirmed</span>'));
     var $card = $('<div class="manage-card"></div>');
     $card.append($('<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"></div>').append(
       $('<span class="eyebrow"></span>').text('Your reservation · Ref ' + b.ref), badge));
@@ -400,6 +409,10 @@
     $card.append($grid);
 
     var $acts = $('<div class="manage-actions"></div>');
+    if (b.status === 'pending') {
+      $card.append($('<div class="alert alert-warn"></div>').text('Waiting for building management to approve ' + b.email +
+        '. Your time is held for you, and you’ll get a confirmation email as soon as it’s approved. New addresses only need approving once.'));
+    }
     if (b.status === 'cancelled') {
       $card.append('<div class="alert alert-info">This reservation was cancelled, and the time is open for others.</div>');
       $acts.append('<a class="btn" href="./">Make a new reservation</a>');
@@ -411,9 +424,11 @@
       } else {
         $card.append('<div class="alert alert-info">This reservation is in progress. To make changes now, please contact management.</div>');
       }
-      $acts.append($('<a class="btn btn-ghost" download></a>').attr('href', 'ics.php?t=' + encodeURIComponent(b.manage_token)).html(GPC.icon('cal') + ' Add to calendar'));
+      if (b.status !== 'pending') {
+        $acts.append($('<a class="btn btn-ghost" download></a>').attr('href', 'ics.php?t=' + encodeURIComponent(b.manage_token)).html(GPC.icon('cal') + ' Add to calendar'));
+      }
       if (b.can_cancel) {
-        $acts.append($('<button type="button" class="btn btn-danger-ghost">Cancel reservation</button>').on('click', cancelManaged));
+        $acts.append($('<button type="button" class="btn btn-danger-ghost"></button>').text(b.status === 'pending' ? 'Cancel request' : 'Cancel reservation').on('click', cancelManaged));
       }
     }
     $card.append($acts);

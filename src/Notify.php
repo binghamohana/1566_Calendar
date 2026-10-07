@@ -6,13 +6,16 @@ namespace GPC;
 /** The words in every automated email. Each method queues a message and returns its outbox id. */
 final class Notify
 {
-    public static function confirmation(array $b, int $seriesCount = 1): ?int
+    public static function confirmation(array $b, int $seriesCount = 1, bool $justApproved = false): ?int
     {
         if (!self::emailable($b)) {
             return null;
         }
         $space = Spaces::find($b['space_id']);
         $paragraphs = ['Hi ' . Util::firstName($b['name']) . ', your reservation is confirmed. Here are the details:'];
+        if ($justApproved) {
+            $paragraphs[0] = 'Hi ' . Util::firstName($b['name']) . ', good news — building management approved your email address, so your reservation is confirmed. From now on, your reservations are confirmed instantly.';
+        }
         if ($seriesCount > 1) {
             $paragraphs[] = "This is a repeating reservation ($seriesCount dates). The first one is below — you’ll get a reminder before each.";
         }
@@ -72,6 +75,105 @@ final class Notify
             'buttons'    => ['Make a new reservation' => App::url('')],
         ]);
         return Mailer::queue('cancelled', $b['email'], $b['name'], 'Cancelled: ' . $space['name'] . ' — ' . self::shortWhen($b), $body, $b['id']);
+    }
+
+    /** To the tenant: their request is held while the building manager approves their email. */
+    public static function pendingReceived(array $b): ?int
+    {
+        if (!self::emailable($b, true) || $b['status'] !== 'pending') {
+            return null;
+        }
+        $space = Spaces::find($b['space_id']);
+        $body = EmailTemplate::render([
+            'preheader'  => 'Awaiting approval · ' . $space['name'] . ' · ' . self::when($b),
+            'heading'    => 'Request received.',
+            'paragraphs' => [
+                'Hi ' . Util::firstName($b['name']) . ', thanks for your reservation request.',
+                Settings::get('org_name') . ' approves each new email address once. We’ve asked building management to approve '
+                    . $b['email'] . ' — you’ll get a confirmation email as soon as they do. Your time is held for you until then.',
+            ],
+            'details'    => self::details($b, $space) + ['Status' => 'Awaiting approval'],
+            'buttons'    => ['View or cancel request' => self::manageUrl($b)],
+        ]);
+        return Mailer::queue('pending', $b['email'], $b['name'], 'Request received: ' . $space['name'] . ' — ' . self::shortWhen($b), $body, $b['id']);
+    }
+
+    /** To the building manager: a new email address wants to book. */
+    public static function approvalRequest(array $access): array
+    {
+        $bookings = EmailAccess::pendingBookings($access['pattern']);
+        $notes = [];
+        foreach ($bookings as $b) {
+            $space = Spaces::find($b['space_id']);
+            $notes[] = ['title' => $space['name'], 'body' => self::when($b) . ($b['title'] ? "\n" . $b['title'] : '')];
+        }
+        $details = array_filter([
+            'Name'    => (string) $access['name'],
+            'Email'   => $access['pattern'],
+            'Company' => (string) $access['company'],
+        ]);
+        $body = EmailTemplate::render([
+            'preheader'  => $access['pattern'] . ' is waiting for approval',
+            'heading'    => 'New email address to approve',
+            'paragraphs' => ['Someone who isn’t on the approved list yet asked to reserve a space. Their time is held until you decide.'],
+            'details'    => $details,
+            'notes'      => $notes,
+            'buttons'    => ['Review & approve' => App::url('approve.php?t=' . $access['token'])],
+            'footer'     => 'Approving adds this address to the approved list, so their future reservations are confirmed instantly. '
+                . 'You can also manage the list in Admin → Approved emails.' . "\n" . EmailTemplate::footer(),
+        ]);
+        $ids = [];
+        foreach (EmailAccess::approverEmails() as $to) {
+            $ids[] = Mailer::queue('approval_request', $to, null, 'Approval needed: ' . ($access['name'] ? $access['name'] . ' (' . $access['pattern'] . ')' : $access['pattern']), $body);
+        }
+        return $ids;
+    }
+
+    /** After an approval or decline, tell each affected tenant. Returns outbox ids. */
+    public static function decisionEmails(array $bookings, bool $approved, string $reason = ''): array
+    {
+        $ids = [];
+        foreach ($bookings as $b) {
+            $ids[] = $approved ? self::confirmation($b, 1, true) : self::declined($b, $reason);
+        }
+        return array_filter($ids);
+    }
+
+    public static function declined(array $b, string $reason = ''): ?int
+    {
+        if (!self::emailable($b, true)) {
+            return null;
+        }
+        $space = Spaces::find($b['space_id']);
+        $paragraphs = ['Hi ' . Util::firstName($b['name']) . ', building management wasn’t able to approve this reservation request, so the time has been released.'];
+        if (trim($reason) !== '') {
+            $paragraphs[] = 'Note from management: ' . $reason;
+        }
+        $paragraphs[] = 'If you think this is a mistake, please reply to this email or contact management.';
+        $body = EmailTemplate::render([
+            'heading'    => 'Request not approved.',
+            'paragraphs' => $paragraphs,
+            'details'    => self::details($b, $space),
+        ]);
+        return Mailer::queue('declined', $b['email'], $b['name'], 'Not approved: ' . $space['name'] . ' — ' . self::shortWhen($b), $body, $b['id']);
+    }
+
+    public static function expired(array $b): ?int
+    {
+        if (!self::emailable($b, true)) {
+            return null;
+        }
+        $space = Spaces::find($b['space_id']);
+        $body = EmailTemplate::render([
+            'heading'    => 'Request expired.',
+            'paragraphs' => [
+                'Hi ' . Util::firstName($b['name']) . ', building management didn’t get to your request before it was due to start, so the time has been released.',
+                'They’ll still review your email address. Once it’s approved you can book instantly.',
+            ],
+            'details'    => self::details($b, $space),
+            'buttons'    => ['Make a new reservation' => App::url('')],
+        ]);
+        return Mailer::queue('expired', $b['email'], $b['name'], 'Request expired: ' . $space['name'] . ' — ' . self::shortWhen($b), $body, $b['id']);
     }
 
     public static function reminder(array $b): ?int

@@ -10,6 +10,7 @@ use GPC\Audit;
 use GPC\Auth;
 use GPC\Bookings;
 use GPC\Db;
+use GPC\EmailAccess;
 use GPC\Http;
 use GPC\Jobs;
 use GPC\Mailer;
@@ -58,6 +59,7 @@ Http::handle(function (): void {
                 'csrf'     => Auth::csrfToken(),
                 'spaces'   => array_map([Spaces::class, 'adminView'], Spaces::all()),
                 'settings' => Settings::editable(),
+                'approvals_pending' => EmailAccess::pendingCount(),
                 'today'    => Time::today(),
                 'now_min'  => (int) Time::nowLocal()->format('G') * 60 + (int) Time::nowLocal()->format('i'),
             ]);
@@ -118,6 +120,18 @@ Http::handle(function (): void {
                     'manage_url'      => $booking['manage_token'] ? Notify::manageUrl($booking) : null,
                     'series_count'    => $booking['series_id'] ? (int) Db::value("SELECT COUNT(*) FROM bookings WHERE series_id = ? AND status = 'confirmed'", [$booking['series_id']]) : 0,
                 ],
+                'access'  => $booking['status'] === 'pending' && $booking['email']
+                    ? (static function (?array $row): ?array {
+                        if (!$row) {
+                            return null;
+                        }
+                        unset($row['token']);
+                        $row['id'] = (int) $row['id'];
+                        $row['domain'] = EmailAccess::domainOf($row['pattern']);
+                        $row['domain_ok'] = !EmailAccess::isPublicDomain($row['domain']);
+                        return $row;
+                    })(EmailAccess::findByPattern($booking['email']))
+                    : null,
                 'history' => Audit::forBooking($booking['id']),
                 'emails'  => Db::all('SELECT id, type, to_email, subject, status, attempts, last_error, sent_at, created_at FROM emails WHERE booking_id = ? ORDER BY id', [$booking['id']]),
             ]);
@@ -196,6 +210,44 @@ Http::handle(function (): void {
         case 'POST space_photo_remove':
             Spaces::removePhoto((int) ($in['id'] ?? 0));
             Http::json(['ok' => true]);
+            return;
+
+        // ---- Approved emails ----
+        case 'GET access':
+            Http::json(['ok' => true, 'entries' => EmailAccess::listAll(), 'approvers' => EmailAccess::approverEmails(), 'require_approval' => (bool) Settings::get('require_approval')]);
+            return;
+
+        case 'POST access_add':
+            $entries = preg_split('/[\s,;]+/', (string) ($in['entries'] ?? ''));
+            $r = EmailAccess::add($entries, $actor);
+            $emailIds = Notify::decisionEmails($r['confirmed'], true);
+            Http::jsonAndFinish(['ok' => true, 'added' => $r['added'], 'invalid' => $r['invalid'], 'confirmed' => count($r['confirmed'])]);
+            Mailer::sendNow($emailIds);
+            return;
+
+        case 'POST access_remove':
+            EmailAccess::remove((int) ($in['id'] ?? 0), $actor);
+            Http::json(['ok' => true]);
+            return;
+
+        case 'POST access_approve':
+        case 'POST access_decline':
+            $row = EmailAccess::find((int) ($in['id'] ?? 0));
+            if (!$row || $row['status'] === 'approved') {
+                throw new AppError('That request was already handled.', 409);
+            }
+            if ($action === 'access_approve') {
+                $r = EmailAccess::approve($row, $actor, filter_var($in['whole_domain'] ?? false, FILTER_VALIDATE_BOOLEAN));
+                $emailIds = Notify::decisionEmails($r['confirmed'], true);
+                $count = count($r['confirmed']);
+            } else {
+                $reason = (string) ($in['reason'] ?? '');
+                $cancelled = EmailAccess::decline($row, $actor, $reason);
+                $emailIds = Notify::decisionEmails($cancelled, false, $reason);
+                $count = count($cancelled);
+            }
+            Http::jsonAndFinish(['ok' => true, 'bookings' => $count]);
+            Mailer::sendNow($emailIds);
             return;
 
         // ---- Settings ----
@@ -323,7 +375,7 @@ function searchBookings(array $q, int $limit = 50): array
         $where[] = 'space_id = ?';
         $params[] = (int) $q['space_id'];
     }
-    if (in_array($q['status'] ?? '', ['confirmed', 'cancelled'], true)) {
+    if (in_array($q['status'] ?? '', ['confirmed', 'cancelled', 'pending'], true)) {
         $where[] = 'status = ?';
         $params[] = $q['status'];
     }

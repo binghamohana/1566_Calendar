@@ -16,8 +16,8 @@ if (!$lock || !flock($lock, LOCK_EX | LOCK_NB)) {
 
 try {
     $r = GPC\Jobs::run();
-    if ($r['reminders'] || $r['followups'] || $r['sent'] || $r['failed']) {
-        printf("[%s] reminders=%d followups=%d sent=%d failed=%d\n", gmdate('Y-m-d H:i:s'), $r['reminders'], $r['followups'], $r['sent'], $r['failed']);
+    if ($r['reminders'] || $r['followups'] || $r['expired'] || $r['sent'] || $r['failed']) {
+        printf("[%s] reminders=%d followups=%d expired=%d sent=%d failed=%d\n", gmdate('Y-m-d H:i:s'), $r['reminders'], $r['followups'], $r['expired'], $r['sent'], $r['failed']);
     }
 } catch (Throwable $e) {
     fwrite(STDERR, '[' . gmdate('Y-m-d H:i:s') . '] cron error: ' . $e->getMessage() . "\n");
