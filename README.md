@@ -80,6 +80,7 @@ config/            config.sample.php → copy to config.php (not in git)
 sql/schema.sql     database tables
 bin/               install.php, cron.php, check.php, admin.php, backup.sh
 docs/              architecture, deployment, admin guide, Apache sample
+docs/brand/        logo files (SVG in several colorways + PNG) — see docs/brand/README.md
 storage/           logs and backups (writable, not web-visible)
 tests/             integration tests (run.php) and demo data (seed-demo.php)
 ```

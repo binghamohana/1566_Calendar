@@ -52,8 +52,9 @@ New email addresses need the building manager's OK once. After that, that person
 
 **Spaces → Add space / Edit**
 - Name, short name (calendar column), location, capacity, description, amenities, calendar color.
-- **Photo:** upload a JPG/PNG/WebP (resized automatically, landscape works best). Without a photo
-  the card shows an architectural pattern in the space's color.
+- **Photo:** the three launch spaces come with photos built in. Upload a JPG/PNG/WebP to replace one
+  (resized automatically, landscape works best); **Remove** goes back to the built-in photo. New
+  spaces without a photo show a pattern in the space's color.
 - **When can tenants book it?** "Any time" (default) or weekly hours per day, e.g.
   Mon–Fri 7 AM–10 PM, Sat 8 AM–10 PM, Sun 10 AM–8 PM. Untick a day to close it.
 - Per-space overrides for longest booking and how far ahead.

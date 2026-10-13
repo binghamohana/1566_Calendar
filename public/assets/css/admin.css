@@ -18,7 +18,7 @@ body.admin { background: var(--bg); }
   padding: 20px 14px; border-right: 1px solid var(--line-soft); background: var(--surface-2);
 }
 .side .brand { padding: 4px 8px 18px; }
-.side .brand-name { font-size: 19px; }
+.side .brand-lockup { height: 38px; }
 .side-label { font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); padding: 14px 10px 6px; }
 .side a.nav {
   display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px;

@@ -97,9 +97,7 @@ h1, h2, h3 { margin: 0; font-weight: 400; letter-spacing: -0.01em; }
   border-bottom: 1px solid var(--line-soft);
 }
 .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); min-width: 0; }
-.brand img { width: 32px; height: 32px; flex: none; }
-.brand-name { font-family: var(--display); font-size: 22px; line-height: 1; white-space: nowrap; }
-.brand-name em { font-style: italic; color: var(--brand-2); }
+.brand-lockup { height: 40px; width: auto; flex: none; display: block; }
 .topnav { margin-left: auto; display: flex; align-items: center; gap: 4px; }
 .topnav a, .topnav button {
   appearance: none; border: 0; background: none; cursor: pointer;
@@ -274,7 +272,9 @@ main { flex: 1; width: 100%; }
 .pill.closed { color: var(--muted); }
 
 /* ---------- Home ---------- */
-.hero { padding: clamp(36px, 7vw, 84px) 0 clamp(24px, 4vw, 40px); }
+.hero { padding: clamp(36px, 7vw, 84px) 0 clamp(24px, 4vw, 40px); display: grid; grid-template-columns: 1fr auto; gap: 40px; align-items: center; }
+.hero-logo { height: clamp(260px, 26vw, 360px); width: auto; margin-right: clamp(0px, 3vw, 48px); }
+@media (max-width: 899px) { .hero { grid-template-columns: 1fr; } .hero-logo { display: none; } }
 .hero h1 { font-family: var(--display); font-size: clamp(48px, 8vw, 92px); line-height: .98; margin: 10px 0 18px; }
 .hero h1 em { font-style: italic; color: var(--brand-2); }
 .hero p { max-width: 560px; color: var(--ink-2); font-size: clamp(16px, 1.6vw, 18px); margin: 0; }
@@ -504,7 +504,7 @@ button.cal-colhead:hover .ch-title { color: var(--brand); text-decoration: under
 @media (max-width: 720px) {
   :root { --topbar-h: 58px; }
   body { font-size: 15px; }
-  .brand-name { font-size: 19px; }
+  .brand-lockup { height: 34px; }
   .topnav a:not(.keep), .topnav .hide-sm { display: none; }
   .space-grid { grid-template-columns: 1fr; }
   .space-card h3 { font-size: 27px; }
@@ -531,7 +531,7 @@ button.cal-colhead:hover .ch-title { color: var(--brand); text-decoration: under
   .ticket-row span { width: 78px; }
 }
 @media (max-width: 380px) {
-  .brand-name em { display: none; }
+  .brand-lockup { height: 30px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }

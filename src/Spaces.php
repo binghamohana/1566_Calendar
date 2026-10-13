@@ -43,7 +43,7 @@ final class Spaces
             'description' => $s['description'],
             'capacity'    => $s['capacity'],
             'amenities'   => self::amenityList($s['amenities']),
-            'photo'       => $s['photo'] ? 'uploads/spaces/' . $s['photo'] : null,
+            'photo'       => self::photoUrl($s),
             'color'       => $s['color'],
             'hours'       => $s['hours'],
             'max_duration_minutes' => self::maxDuration($s),
@@ -54,12 +54,26 @@ final class Spaces
     public static function adminView(array $s): array
     {
         $view = $s;
-        $view['photo_url'] = $s['photo'] ? 'uploads/spaces/' . $s['photo'] : null;
+        $view['photo_url'] = self::photoUrl($s);
+        $view['photo_uploaded'] = (bool) $s['photo'];
         $view['upcoming_count'] = (int) Db::value(
             "SELECT COUNT(*) FROM bookings WHERE space_id = ? AND status = 'confirmed' AND end_utc > ?",
             [$s['id'], Time::nowDb()]
         );
         return $view;
+    }
+
+    /**
+     * Uploaded photo if there is one, else a photo shipped with the app for this slug
+     * (public/assets/img/spaces/<slug>.jpg), else null (the card shows a pattern).
+     */
+    public static function photoUrl(array $s): ?string
+    {
+        if ($s['photo']) {
+            return 'uploads/spaces/' . $s['photo'];
+        }
+        $bundled = 'assets/img/spaces/' . $s['slug'] . '.jpg';
+        return is_file(GPC_ROOT . '/public/' . $bundled) ? Page::asset($bundled) : null;
     }
 
     public static function amenityList(?string $amenities): array

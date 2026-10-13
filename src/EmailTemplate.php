@@ -32,8 +32,11 @@ final class EmailTemplate
             . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:' . self::SAND . ';padding:32px 12px;">'
             . '<tr><td align="center">'
             . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;">'
-            . '<tr><td style="padding:0 8px 18px;font-family:Helvetica,Arial,sans-serif;font-size:12px;letter-spacing:3px;text-transform:uppercase;color:' . self::GREEN . ';font-weight:600;">'
-            . $e($org) . '</td></tr>'
+            . '<tr><td style="padding:0 8px 16px;">'
+            // Logo image; if the email app blocks images, the alt text shows the name instead.
+            . '<img src="' . $e(App::url('assets/img/brand/email-logo.png')) . '" width="230" height="64" alt="' . $e($org) . '"'
+            . ' style="display:block;border:0;outline:none;font-family:Helvetica,Arial,sans-serif;font-size:14px;letter-spacing:2px;text-transform:uppercase;color:' . self::GREEN . ';font-weight:600;">'
+            . '</td></tr>'
             . '<tr><td style="background:#ffffff;border:1px solid ' . self::LINE . ';border-radius:14px;padding:36px 32px;">'
             . '<h1 style="margin:0 0 18px;font-family:Georgia,\'Times New Roman\',serif;font-weight:normal;font-size:28px;line-height:1.25;color:' . self::INK . ';">' . $e($m['heading']) . '</h1>';
 

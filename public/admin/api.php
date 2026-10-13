@@ -209,7 +209,8 @@ Http::handle(function (): void {
 
         case 'POST space_photo_remove':
             Spaces::removePhoto((int) ($in['id'] ?? 0));
-            Http::json(['ok' => true]);
+            $space = Spaces::find((int) ($in['id'] ?? 0));
+            Http::json(['ok' => true, 'space' => $space ? Spaces::adminView($space) : null]);
             return;
 
         // ---- Approved emails ----

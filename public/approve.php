@@ -56,12 +56,12 @@ ob_start();
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>Approval request · <?= $e($org) ?></title>
-<link rel="icon" href="<?= $e(Page::asset('assets/img/favicon.svg')) ?>" type="image/svg+xml">
+<?= Page::headIcons() ?>
 <link rel="stylesheet" href="<?= $e(Page::asset('assets/css/gpc.css')) ?>">
 </head>
 <body>
 <header class="topbar">
-  <a class="brand" href="./"><img src="<?= $e(Page::asset('assets/img/logo-mark.svg')) ?>" alt=""><span class="brand-name"><?= Page::brandName($org) ?></span></a>
+  <a class="brand" href="./"><?= Page::lockup($org) ?></a>
 </header>
 <main class="wrap manage">
   <div class="manage-card" style="max-width:640px">

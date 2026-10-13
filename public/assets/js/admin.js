@@ -56,7 +56,7 @@
   function showLogin() {
     $content = null;
     var $card = $('<div class="login"><div class="login-card">' +
-      '<a class="brand" href="../"><img src="../assets/img/logo-mark.svg" alt=""><span class="brand-name">' + boot.brand_html + '</span></a>' +
+      '<a class="brand" href="../"><img class="brand-lockup" src="' + esc(boot.lockup) + '" alt="' + esc(boot.org_name) + '" width="132" height="40"></a>' +
       '<h1>Management</h1><p>Sign in to manage spaces and reservations.</p>' +
       '<form novalidate>' +
         '<div class="field"><label for="li-email">Email</label><input class="input" type="email" id="li-email" name="email" autocomplete="username" required></div>' +
@@ -88,9 +88,9 @@
   ];
 
   function renderShell() {
-    var side = '<aside class="side"><a class="brand" href="#/dashboard"><img src="../assets/img/logo-mark.svg" alt=""><span class="brand-name">' + boot.brand_html + '</span></a>' +
+    var side = '<aside class="side"><a class="brand" href="#/dashboard"><img class="brand-lockup" src="' + esc(boot.lockup) + '" alt="' + esc(boot.org_name) + '" width="132" height="40"></a>' +
       '<div class="side-label">Management</div>';
-    var mob = '<nav class="mobile-nav"><img src="../assets/img/logo-mark.svg" alt="">';
+    var mob = '<nav class="mobile-nav"><img src="' + esc(boot.mark) + '" alt="' + esc(boot.org_name) + '">';
     NAV.forEach(function (n) {
       side += '<a class="nav" href="#/' + n[0] + '" data-nav="' + n[0] + '">' + GPC.icon(n[2]) + n[1] + '</a>';
       mob += '<a href="#/' + n[0] + '" data-nav="' + n[0] + '">' + n[1] + '</a>';
@@ -776,8 +776,13 @@
       var $art = $('<div class="space-art"></div>').css('--c', s.color).html(s.photo_url ? '<img src="../' + esc(s.photo_url) + '" alt="">' : '<div class="ph"><div class="ph-mark">' + esc(s.name.charAt(0)) + '</div></div>');
       var $file = $('<input type="file" accept="image/jpeg,image/png,image/webp" hidden>');
       var $up = $('<button type="button" class="btn btn-ghost btn-sm">Upload photo</button>').on('click', function () { $file.trigger('click'); });
-      var $rm = $('<button type="button" class="btn btn-quiet btn-sm">Remove</button>').toggle(!!s.photo_url).on('click', function () {
-        post('space_photo_remove', { id: s.id }).then(function () { $art.html('<div class="ph"><div class="ph-mark">' + esc(s.name.charAt(0)) + '</div></div>'); $rm.hide(); refreshMe(); }, fail);
+      var $rm = $('<button type="button" class="btn btn-quiet btn-sm">Remove</button>').toggle(!!s.photo_uploaded).on('click', function () {
+        post('space_photo_remove', { id: s.id }).then(function (r) {
+          // Falls back to the photo shipped with the app for this space, if there is one.
+          var url = r.space && r.space.photo_url;
+          $art.html(url ? '<img src="../' + esc(url) + '" alt="">' : '<div class="ph"><div class="ph-mark">' + esc(s.name.charAt(0)) + '</div></div>');
+          $rm.hide(); refreshMe();
+        }, fail);
       });
       $file.on('change', function () {
         if (!this.files[0]) return;

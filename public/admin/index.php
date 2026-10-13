@@ -27,7 +27,7 @@ $a = static fn ($path) => '../' . Page::asset($path);
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
 <title>Admin · <?= $e($org) ?></title>
-<link rel="icon" href="<?= $e($a('assets/img/favicon.svg')) ?>" type="image/svg+xml">
+<?= Page::headIcons('../') ?>
 <link rel="stylesheet" href="<?= $e($a('assets/css/gpc.css')) ?>">
 <link rel="stylesheet" href="<?= $e($a('assets/css/admin.css')) ?>">
 </head>
@@ -35,7 +35,7 @@ $a = static fn ($path) => '../' . Page::asset($path);
 <div id="admin-app">
   <div class="admin-loading"><span class="spinner"></span></div>
 </div>
-<script type="application/json" id="boot"><?= json_encode(['org_name' => $org, 'timezone' => $timezone, 'brand_html' => Page::brandName($org)], JSON_HEX_TAG | JSON_HEX_AMP | JSON_UNESCAPED_UNICODE) ?></script>
+<script type="application/json" id="boot"><?= json_encode(['org_name' => $org, 'timezone' => $timezone, 'lockup' => '../' . Page::asset('assets/img/brand/lockup.svg'), 'mark' => '../' . Page::asset('assets/img/brand/mark.svg')], JSON_HEX_TAG | JSON_HEX_AMP | JSON_UNESCAPED_UNICODE) ?></script>
 <script src="<?= $e($a('assets/vendor/jquery-3.7.1.min.js')) ?>"></script>
 <script src="<?= $e($a('assets/js/common.js')) ?>"></script>
 <script src="<?= $e($a('assets/js/calendar.js')) ?>"></script>

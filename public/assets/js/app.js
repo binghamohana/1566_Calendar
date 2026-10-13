@@ -73,7 +73,7 @@
     cal = null;
     document.title = boot.tagline + ' · ' + boot.org_name;
     var h = '<div class="wrap">' +
-      '<section class="hero">' +
+      '<section class="hero"><div>' +
         '<div class="eyebrow">' + GPC.esc(boot.org_name) + '</div>' +
         '<h1>' + GPC.esc(boot.tagline).replace(/(\S+)$/, '<em>$1</em>') + '</h1>' +
         '<p>' + GPC.esc(boot.intro) + '</p>' +
@@ -82,7 +82,7 @@
           '<span>' + GPC.icon('clock') + 'Book in under a minute</span>' +
           '<span>' + GPC.icon('key') + 'No account or password</span>' +
         '</div>' +
-      '</section>' +
+      '</div><img class="hero-logo" src="' + GPC.esc(boot.logo) + '" alt="" width="208" height="290"></section>' +
       '<div class="space-grid"></div>' +
       '<div class="home-strip">' +
         '<div><h2>See everything at a glance</h2><p>Every space side by side for any day.</p></div>' +

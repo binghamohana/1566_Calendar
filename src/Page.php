@@ -42,6 +42,7 @@ final class Page
             ],
             'spaces'        => array_map([Spaces::class, 'publicView'], Spaces::all(true)),
             'manage_token'  => $manageToken,
+            'logo'          => self::asset('assets/img/brand/logo.svg'),
         ];
         $e = static fn ($v) => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
         $title = $manageToken ? 'Your reservation' : $s['tagline'];
@@ -56,18 +57,14 @@ final class Page
 <meta name="description" content="<?= $e($s['intro']) ?>">
 <meta name="theme-color" content="#F6F3EE">
 <meta name="format-detection" content="telephone=no">
-<link rel="icon" href="<?= $e(self::asset('assets/img/favicon.svg')) ?>" type="image/svg+xml">
-<link rel="apple-touch-icon" href="<?= $e(self::asset('assets/img/logo-mark.svg')) ?>">
+<?= self::headIcons() ?>
 <link rel="preload" href="assets/fonts/inter-latin-var.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="assets/fonts/instrument-serif-latin-400.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="<?= $e(self::asset('assets/css/gpc.css')) ?>">
 </head>
 <body class="public">
 <header class="topbar">
-  <a class="brand" href="./#/">
-    <img src="<?= $e(self::asset('assets/img/logo-mark.svg')) ?>" alt="">
-    <span class="brand-name"><?= self::brandName($s['org_name']) ?></span>
-  </a>
+  <a class="brand" href="./#/"><?= self::lockup($s['org_name']) ?></a>
   <nav class="topnav" aria-label="Main">
     <a href="./#/" data-nav="home" class="keep">Spaces</a>
     <a href="./#/calendar/<?= $e(Time::today()) ?>" data-nav="calendar" class="keep">Calendar</a>
@@ -96,12 +93,20 @@ final class Page
 <?php
     }
 
-    /** "Grove Park Collective" → "Grove Park <em>Collective</em>" for the wordmark. */
-    public static function brandName(string $name): string
+    /** Favicon + home-screen icon tags. $prefix is "../" for pages in subfolders (admin). */
+    public static function headIcons(string $prefix = ''): string
     {
-        $e = htmlspecialchars($name, ENT_QUOTES, 'UTF-8');
-        $pos = strrpos($e, ' ');
-        return $pos === false ? $e : substr($e, 0, $pos) . ' <em>' . substr($e, $pos + 1) . '</em>';
+        $e = static fn ($v) => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
+        return '<link rel="icon" href="' . $e($prefix . self::asset('assets/img/brand/favicon.svg')) . '" type="image/svg+xml">' . "\n"
+            . '<link rel="apple-touch-icon" href="' . $e($prefix . self::asset('assets/img/brand/apple-touch-icon.png')) . '">';
+    }
+
+    /** The horizontal logo (tree + GROVE PARK / COLLECTIVE) used in headers. */
+    public static function lockup(string $alt, string $prefix = '', bool $white = false): string
+    {
+        $e = static fn ($v) => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
+        $file = $white ? 'assets/img/brand/lockup-white.svg' : 'assets/img/brand/lockup.svg';
+        return '<img class="brand-lockup" src="' . $e($prefix . self::asset($file)) . '" alt="' . $e($alt) . '" width="132" height="40">';
     }
 
     public static function setupError(\Throwable $e): void
