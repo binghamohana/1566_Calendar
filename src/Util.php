@@ -67,6 +67,17 @@ final class Util
         return preg_split('/\s+/u', $name)[0];
     }
 
+    /** ['A'] → "A", ['A', 'B'] → "A and B", ['A', 'B', 'C'] → "A, B and C". */
+    public static function andList(array $items): string
+    {
+        $items = array_values($items);
+        if (count($items) < 2) {
+            return (string) ($items[0] ?? '');
+        }
+        $last = array_pop($items);
+        return implode(', ', $items) . ' and ' . $last;
+    }
+
     public static function isValidEmail(string $email): bool
     {
         return strlen($email) <= 190

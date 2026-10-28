@@ -8,12 +8,27 @@ final class Ics
 {
     public static function forBooking(array $b, array $space): string
     {
+        return self::wrap([self::reservationEvent($b, $space)], 'PUBLISH');
+    }
+
+    /** "Add to calendar" for a reservation booked in one go: one event per room per date. */
+    public static function forBookings(array $rows): string
+    {
+        $events = [];
+        foreach ($rows as $b) {
+            $events[] = self::reservationEvent($b, Spaces::find($b['space_id']) ?? ['name' => 'Space']);
+        }
+        return self::wrap($events, 'PUBLISH');
+    }
+
+    private static function reservationEvent(array $b, array $space): array
+    {
         $summary = ($b['title'] ? $b['title'] . ' — ' : '') . $space['name'];
         $description = 'Reservation ' . $b['ref'] . ' at ' . Settings::get('org_name') . '.';
         if ($b['manage_token']) {
             $description .= "\nChange or cancel: " . App::url('manage.php?t=' . $b['manage_token']);
         }
-        return self::wrap([self::event($b, $summary, $space['name'], $description)], 'PUBLISH');
+        return self::event($b, $summary, $space['name'], $description);
     }
 
     /** Feed for Google Calendar / Outlook subscriptions. Includes names, so it is protected by a secret key. */

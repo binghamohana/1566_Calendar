@@ -135,7 +135,7 @@ check('moves a booking to a free time', $didMove && $moved['start'] === '15:00' 
 [$same, $didMove2] = Bookings::updateByOwner($moved, ['space_id' => 1, 'date' => '2026-10-13', 'start' => '15:00', 'end' => '16:00', 'name' => 'Sam Rivera', 'title' => 'Renamed']);
 check('editing details without moving does not conflict with itself', !$didMove2 && $same['title'] === 'Renamed');
 check('owner cannot change the email on a booking', $same['email'] === 'sam@acme.com');
-$cancelled = Bookings::cancelByOwner($a);
+[$cancelled] = Bookings::cancelByOwner($a);
 check('cancels a booking', $cancelled['status'] === 'cancelled');
 $rebook = book(['start' => '13:00', 'end' => '14:00', 'email' => 'jo@acme.com', 'name' => 'Jo'], '10.0.0.3');
 check('cancelled time is immediately bookable again', $rebook['status'] === 'confirmed');
@@ -329,6 +329,141 @@ check('form token: instant submissions are refused', expectError(fn () => FormTo
 check('form token: forged tokens are refused', expectError(fn () => FormToken::check(['form_token' => (time() - 60) . '.forged']), 'stale_form') !== null);
 $old = (time() - 30) . '.' . GPC\Util::sign('form|' . (time() - 30));
 check('form token: a normal submission passes', (function () use ($old) { FormToken::check(['form_token' => $old]); return true; })());
+
+// ---------------------------------------------------------------------------
+echo "\nSeveral rooms at once, and weekly repeats\n";
+reset_db();
+freeze('2026-10-07 16:00:00'); // Wed Oct 7, 12:00 PM in Atlanta
+$lee = ['name' => 'Lee Park', 'email' => 'lee@acme.com', 'title' => 'Saturday workshop', 'company' => 'Acme'];
+$lastEmail = static fn (string $type) => Db::one('SELECT * FROM emails WHERE type = ? ORDER BY id DESC LIMIT 1', [$type]);
+
+[$m] = Bookings::createPublic($lee + ['space_ids' => [2, 1], 'date' => '2026-10-10', 'start' => '10:00', 'end' => '14:00'], '10.3.0.1');
+$mGroup = Bookings::groupOf($m);
+check('books two rooms in one go', count($mGroup) === 2 && $mGroup[0]['series_id'] && $mGroup[0]['series_id'] === $mGroup[1]['series_id']
+    && array_column($mGroup, 'space_id') === [1, 2] && Bookings::statusOf($mGroup) === 'confirmed');
+$mView = Bookings::ownerView($m);
+check('the manage view shows both rooms in booking-page order', $mView['space_name'] === 'Upstairs Conference Room + Downstairs Conference Room'
+    && $mView['space_ids'] === [1, 2] && count($mView['occasions']) === 1 && count($mView['mine']) === 2);
+
+book(['space_id' => 3, 'date' => '2026-10-10', 'start' => '14:00', 'end' => '15:00', 'email' => 'kim@other.com', 'name' => 'Kim'], '10.3.0.9');
+$err = expectError(fn () => Bookings::createPublic($lee + ['space_ids' => [2, 3], 'date' => '2026-10-10', 'start' => '14:00', 'end' => '15:00'], '10.3.0.1'), 'conflict');
+check('if one room is taken, nothing is booked (and the message names the room)', $err !== null && str_contains($err->getMessage(), 'Upstairs Lounge')
+    && (int) Db::value("SELECT COUNT(*) FROM bookings WHERE email = 'lee@acme.com'") === 2);
+
+Db::update('spaces', ['hours' => json_encode(['0' => null, '1' => ['09:00', '17:00'], '2' => ['09:00', '17:00'], '3' => ['09:00', '17:00'], '4' => ['09:00', '17:00'], '5' => ['09:00', '17:00'], '6' => ['10:00', '14:00']])], 'id = 2', []);
+check('every room’s opening hours apply', expectError(fn () => Bookings::createPublic($lee + ['space_ids' => [1, 2], 'date' => '2026-10-17', 'start' => '13:00', 'end' => '15:00'], '10.3.0.1'), null, 'start') !== null);
+Db::update('spaces', ['hours' => null], 'id = 2', []);
+
+$repeat = $lee + ['space_ids' => [1, 2], 'date' => '2026-10-17', 'start' => '10:00', 'end' => '14:00', 'repeat' => 'weekly'];
+check('repeats can reach 12 weeks ahead, not further', expectError(fn () => Bookings::createPublic($repeat + ['repeat_until' => '2027-01-02'], '10.3.0.1'), null, 'repeat_until') !== null);
+check('a repeat needs an end date at least a week later', expectError(fn () => Bookings::createPublic($repeat + ['repeat_until' => '2026-10-20'], '10.3.0.1'), null, 'repeat_until') !== null);
+Settings::set('repeat_max_weeks', 0);
+check('repeats can be turned off in Settings', expectError(fn () => Bookings::createPublic($repeat + ['repeat_until' => '2026-11-14'], '10.3.0.1'), null, 'repeat') !== null);
+Settings::set('repeat_max_weeks', 12);
+
+book(['space_id' => 2, 'date' => '2026-10-31', 'start' => '10:00', 'end' => '11:00', 'email' => 'kim@other.com', 'name' => 'Kim'], '10.3.0.9');
+$err = expectError(fn () => Bookings::createPublic($repeat + ['repeat_until' => '2026-12-26'], '10.3.0.1'), 'conflict');
+check('a repeat lists the taken dates instead of booking around them silently', $err !== null && count($err->extra['conflicts']) === 1
+    && $err->extra['conflicts'][0]['date'] === '2026-10-31' && $err->extra['creatable'] === 10 && $err->extra['total'] === 11);
+check('…without revealing who has them', $err !== null && !array_filter($err->extra['conflicts'], static fn ($c) => isset($c['name']) || isset($c['label']) || isset($c['email'])));
+[$s1] = Bookings::createPublic($repeat + ['repeat_until' => '2026-12-26', 'skip_conflicts' => true], '10.3.0.1');
+$series = Bookings::groupOf($s1);
+check('…and can book every other Saturday through Dec 26, both rooms each', count($series) === 20 && count(Bookings::byOccasion($series)) === 10
+    && !in_array('2026-10-31', array_column($series, 'date'), true) && end($series)['date'] === '2026-12-26');
+check('the manage view lists all 10 dates', count(Bookings::ownerView($s1)['occasions']) === 10);
+
+Settings::set('max_upcoming_per_email', 12); // Lee has 11 upcoming dates (22 rooms): Oct 10 + 10 Saturdays
+check('the upcoming limit counts dates, not rooms', Bookings::createPublic($lee + ['space_ids' => [1, 2], 'date' => '2026-10-12', 'start' => '09:00', 'end' => '10:00'], '10.3.0.1')[0]['status'] === 'confirmed');
+Settings::set('max_upcoming_per_email', 13);
+check('…and refuses a repeat that would go over it', expectError(fn () => Bookings::createPublic($lee + ['space_id' => 3, 'date' => '2026-10-13', 'start' => '09:00', 'end' => '10:00', 'repeat' => 'weekly', 'repeat_until' => '2026-10-20'], '10.3.0.1'), null, 'repeat_until') !== null);
+Settings::set('max_upcoming_per_email', 25);
+
+$cid = GPC\Notify::confirmation($s1);
+$conf = Db::one('SELECT * FROM emails WHERE id = ?', [$cid]);
+check('one confirmation covers every room and date', $conf !== null && substr_count((string) $conf['ics'], 'BEGIN:VEVENT') === 20
+    && $conf['subject'] === 'Confirmed: Upstairs Conference Room + Downstairs Conference Room — Saturdays from Oct 17 (10 dates)'
+    && str_contains($conf['body_text'], 'Sat, Oct 24') && str_contains($conf['body_text'], 'Sat, Dec 26') && !str_contains($conf['body_text'], 'Sat, Oct 31'));
+
+freeze('2026-10-17 13:05:00'); // Sat 9:05 AM, 55 minutes before
+check('one reminder per date, naming both rooms', Jobs::queueReminders() === 1
+    && str_contains($lastEmail('reminder')['body_text'], 'Reminder: You have the Upstairs Conference Room and Downstairs Conference Room reserved today from 10:00 AM–2:00 PM.'));
+freeze('2026-10-17 18:01:00'); // 2:01 PM, just after the end
+check('one after-use note per date', Jobs::queueFollowups() === 1 && str_contains($lastEmail('followup')['subject'], 'Upstairs Conference Room and Downstairs Conference Room'));
+freeze('2026-10-18 16:00:00');
+
+$rowOn = static function (string $date, int $space) use ($s1): array {
+    foreach (Bookings::groupOf($s1) as $r) {
+        if ($r['date'] === $date && $r['space_id'] === $space) {
+            return $r;
+        }
+    }
+    throw new RuntimeException("no row on $date in space $space");
+};
+$edit = ['date' => '2026-10-24', 'start' => '10:00', 'end' => '14:00', 'name' => 'Lee Park', 'title' => 'Saturday workshop', 'company' => 'Acme'];
+[, $changed] = Bookings::updateByOwner($rowOn('2026-10-24', 1), $edit + ['space_ids' => [1]]);
+check('a date can drop a room; other dates keep both', $changed && $rowOn('2026-10-24', 2)['status'] === 'cancelled' && $rowOn('2026-10-24', 1)['status'] === 'confirmed'
+    && $rowOn('2026-11-07', 2)['status'] === 'confirmed');
+Bookings::updateByOwner($rowOn('2026-10-24', 1), ['start' => '11:00', 'end' => '15:00', 'space_ids' => [1, 3]] + $edit);
+$o24 = Bookings::ownerView($rowOn('2026-10-24', 2)); // the removed room's link still leads to that date
+check('…can move and add a room (all rooms move together)', $o24['space_name'] === 'Upstairs Conference Room + Upstairs Lounge + Kitchenette' && $o24['start'] === '11:00'
+    && $rowOn('2026-10-24', 3)['status'] === 'confirmed' && $rowOn('2026-10-24', 2)['start'] === '11:00');
+$was = $rowOn('2026-10-24', 2)['id'];
+Bookings::updateByOwner($rowOn('2026-10-24', 3), ['start' => '11:00', 'end' => '15:00', 'space_ids' => [1, 2, 3], 'title' => 'Renamed workshop'] + $edit);
+check('…and re-adding a room reuses its booking, so old links keep working', $rowOn('2026-10-24', 2)['id'] === $was && $rowOn('2026-10-24', 2)['status'] === 'confirmed');
+check('a title change applies to every date', $rowOn('2026-12-26', 2)['title'] === 'Renamed workshop');
+check('only the changed date moved', $rowOn('2026-11-07', 1)['start'] === '10:00' && count(Bookings::occasionOf($rowOn('2026-11-07', 1))) === 2);
+GPC\Notify::updated($rowOn('2026-10-24', 1));
+check('the update email lists the date’s rooms and says other dates are unchanged', str_contains($lastEmail('updated')['subject'], 'Upstairs Conference Room + Downstairs Conference Room + Upstairs Lounge + Kitchenette — Sat, Oct 24, 11:00 AM–3:00 PM')
+    && str_contains($lastEmail('updated')['body_text'], 'Your other dates are unchanged.'));
+book(['space_id' => 3, 'date' => '2026-11-07', 'start' => '09:00', 'end' => '11:00', 'email' => 'kim@other.com', 'name' => 'Kim'], '10.3.0.9');
+check('adding a room that is taken changes nothing', expectError(fn () => Bookings::updateByOwner($rowOn('2026-11-07', 1), ['date' => '2026-11-07', 'space_ids' => [1, 2, 3]] + $edit), 'conflict') !== null
+    && count(array_filter(Bookings::occasionOf($rowOn('2026-11-07', 1)), [Bookings::class, 'isActive'])) === 2);
+
+[$b14, $gone] = Bookings::cancelByOwner($rowOn('2026-11-14', 2));
+check('cancel one date: both rooms released, the rest kept', count($gone) === 2 && $b14['status'] === 'cancelled' && $rowOn('2026-11-21', 1)['status'] === 'confirmed');
+GPC\Notify::cancelled($gone);
+check('…with one email that says the other dates stand', str_contains($lastEmail('cancelled')['body_text'], 'Your other 8 dates are still reserved.'));
+[, $rest] = Bookings::cancelByOwner($rowOn('2026-11-21', 1), 'all');
+check('cancel all remaining dates', count(Bookings::byOccasion($rest)) === 8 && !array_filter(Bookings::groupOf($s1), static fn ($r) => Bookings::isActive($r) && $r['end_utc'] > Time::nowDb()));
+check('…and nothing is left to cancel', expectError(fn () => Bookings::cancelByOwner($rowOn('2026-12-26', 1), 'all')) !== null);
+check('dates that already happened stay as they were', $rowOn('2026-10-17', 1)['status'] === 'confirmed');
+
+$adminMulti = Bookings::adminCreate(['kind' => 'reservation', 'space_ids' => [1, 2], 'date' => '2026-11-07', 'start' => '15:00', 'end' => '16:00',
+    'repeat' => 'weekly', 'repeat_until' => '2026-11-21', 'name' => 'Board', 'email' => 'board@acme.com'], $admin);
+check('admins can reserve several rooms at once too', count($adminMulti['bookings']) === 6 && count(Bookings::byOccasion($adminMulti['bookings'])) === 3);
+check('admins can cancel one space, or every space on a date', count(Bookings::adminCancel($adminMulti['bookings'][0]['id'], 'one', '', $admin)) === 1
+    && count(Bookings::adminCancel($adminMulti['bookings'][2]['id'], 'date', '', $admin)) === 2
+    && Bookings::find($adminMulti['bookings'][4]['id'])['status'] === 'confirmed');
+GPC\Notify::cancelled([Bookings::find($adminMulti['bookings'][0]['id'])], true);
+check('…and the email says what is still reserved', str_contains($lastEmail('cancelled')['body_text'], 'Still reserved at the same time: Downstairs Conference Room.')
+    && str_contains($lastEmail('cancelled')['body_text'], 'Your other date is still reserved.'));
+
+echo "\nApproval and expiry for repeats\n";
+Settings::set('require_approval', true);
+[$p1, , $reqN] = Bookings::createPublic(['space_ids' => [1, 2], 'date' => '2026-11-03', 'start' => '09:00', 'end' => '10:00', 'repeat' => 'weekly', 'repeat_until' => '2026-11-17', 'name' => 'Nia New', 'email' => 'nia@newco.com'], '10.4.0.1');
+check('a new address’s repeat is held as one request', $p1['status'] === 'pending' && $reqN !== null && count(Bookings::groupOf($p1)) === 6);
+check('…which counts once toward the 3 waiting requests',
+    Bookings::createPublic(['space_id' => 3, 'date' => '2026-11-04', 'start' => '09:00', 'end' => '10:00', 'name' => 'Nia New', 'email' => 'nia@newco.com'], '10.4.0.1')[0]['status'] === 'pending');
+$before = (int) Db::value('SELECT COUNT(*) FROM emails');
+GPC\Notify::pendingReceived($p1);
+GPC\Notify::approvalRequest($reqN);
+$ask = $lastEmail('approval_request');
+check('one “request received” email and one approval email describing it', (int) Db::value('SELECT COUNT(*) FROM emails') === $before + 2
+    && stripos($ask['body_text'], 'Upstairs Conference Room + Downstairs Conference Room') !== false && str_contains($ask['body_text'], '3 dates'));
+
+freeze('2026-11-03 14:05:00'); // 9:05 AM Nov 3 (EST): the first date started, still unapproved
+$res = Jobs::run();
+check('an unapproved date is released when it starts, both rooms, one email', $res['expired'] === 2
+    && (int) Db::value("SELECT COUNT(*) FROM emails WHERE type = 'expired'") === 1
+    && str_contains($lastEmail('expired')['body_text'], 'Your other 2 dates are still held'));
+$confirmedBefore = (int) Db::value("SELECT COUNT(*) FROM emails WHERE type = 'confirmation'");
+$ok = GPC\EmailAccess::approve(GPC\EmailAccess::findByToken($reqN['token']), 'boss');
+$ids = GPC\Notify::decisionEmails($ok['confirmed'], true);
+check('approving confirms the rest, one email per reservation', count($ok['confirmed']) === 5 && count($ids) === 2
+    && (int) Db::value("SELECT COUNT(*) FROM emails WHERE type = 'confirmation'") === $confirmedBefore + 2);
+check('the approval page lists one line per reservation', count(GPC\Notify::summaries($ok['confirmed'])) === 2);
+Settings::set('require_approval', false);
+freeze('2026-10-07 16:00:00');
 
 // ---------------------------------------------------------------------------
 echo "\nConcurrency: 12 people grab the same slot at the same instant\n";

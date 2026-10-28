@@ -85,7 +85,7 @@ final class EmailTemplate
             $text .= $p . "\n\n";
         }
         foreach ($m['details'] ?? [] as $label => $value) {
-            $text .= str_pad($label . ':', 12) . ' ' . $value . "\n";
+            $text .= str_pad($label . ':', 12) . ' ' . str_replace("\n", "\n" . str_repeat(' ', 13), (string) $value) . "\n";
         }
         if (!empty($m['details'])) {
             $text .= "\n";

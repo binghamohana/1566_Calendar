@@ -63,7 +63,7 @@ Http::handle(function (): void {
                 }
             } elseif (!$duplicate) {
                 $emailIds[] = Notify::confirmation($booking);
-                $emailIds = array_merge($emailIds, Notify::admins($booking, 'new'));
+                $emailIds = array_merge($emailIds, Notify::admins(Bookings::groupOf($booking), 'new'));
             }
             Http::jsonAndFinish(['ok' => true, 'duplicate' => $duplicate, 'booking' => Bookings::ownerView($booking)], $duplicate ? 200 : 201);
             Mailer::sendNow($emailIds);
@@ -87,9 +87,10 @@ Http::handle(function (): void {
             return;
 
         case 'POST cancel':
-            $booking = Bookings::cancelByOwner($ownerBooking($in));
-            $emailIds = array_merge([Notify::cancelled($booking)], Notify::admins($booking, 'cancelled'));
-            Http::jsonAndFinish(['ok' => true, 'booking' => Bookings::ownerView($booking)]);
+            // scope 'date' (default): this date, every room on it; 'all': every date not yet over.
+            [$booking, $cancelled] = Bookings::cancelByOwner($ownerBooking($in), ($in['scope'] ?? '') === 'all' ? 'all' : 'date');
+            $emailIds = array_merge([Notify::cancelled($cancelled)], Notify::admins($cancelled, 'cancelled'));
+            Http::jsonAndFinish(['ok' => true, 'booking' => Bookings::ownerView($booking), 'cancelled' => count(Bookings::byOccasion($cancelled))]);
             Mailer::sendNow($emailIds);
             return;
 

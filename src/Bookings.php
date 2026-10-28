@@ -101,35 +101,54 @@ final class Bookings
         return $who !== '' ? "$base — $who" : $base;
     }
 
-    /** What the person holding the manage link sees. */
+    /**
+     * What the person holding the manage link sees: the date and time of this booking with every
+     * room booked for it, plus (for a repeating or multi-room reservation) all of its dates.
+     */
     public static function ownerView(array $b): array
     {
-        $space = Spaces::find($b['space_id']);
+        $group = self::groupOf($b);
+        $occasion = array_values(array_filter($group, static fn ($r) => $r['start_utc'] === $b['start_utc']));
+        $active = array_values(array_filter($occasion, [self::class, 'isActive']));
+        $shown = $active ?: $occasion;
+        $spaces = array_map(static fn ($s) => ['id' => $s['id'], 'name' => $s['name']], self::spacesOf($shown));
         $now = Time::now();
         $start = new DateTimeImmutable($b['start_utc'], Time::utc());
         $end = new DateTimeImmutable($b['end_utc'], Time::utc());
-        $active = in_array($b['status'], ['confirmed', 'pending'], true) && $b['kind'] === 'reservation';
+        $live = $active && $b['kind'] === 'reservation';
+
+        $mine = [];
+        foreach ($group as $r) {
+            if (self::isActive($r) && $r['end_utc'] > Time::nowDb()) {
+                $mine[$r['ref']] = ['t' => $r['manage_token'], 'd' => $r['date']];
+            }
+        }
         return [
-            'ref'        => $b['ref'],
-            'status'     => $b['status'],
-            'space_id'   => $b['space_id'],
-            'space_name' => $space['name'] ?? '',
-            'date'       => $b['date'],
-            'start'      => $b['start'],
-            'end'        => $b['end'],
-            'start_min'  => $b['start_min'],
-            'end_min'    => $b['end_min'],
-            'name'       => $b['name'],
-            'email'      => $b['email'],
-            'title'      => $b['title'],
-            'company'    => $b['company'],
-            'notes'      => $b['notes'],
-            'is_private' => (bool) $b['is_private'],
+            'ref'          => $b['ref'],
+            'refs'         => array_column($shown, 'ref'),
+            'status'       => self::statusOf($shown),
+            'space_id'     => $spaces[0]['id'] ?? $b['space_id'],
+            'space_ids'    => array_column($spaces, 'id'),
+            'space_name'   => implode(' + ', array_column($spaces, 'name')),
+            'spaces'       => $spaces,
+            'date'         => $b['date'],
+            'start'        => $b['start'],
+            'end'          => $b['end'],
+            'start_min'    => $b['start_min'],
+            'end_min'      => $b['end_min'],
+            'name'         => $b['name'],
+            'email'        => $b['email'],
+            'title'        => $b['title'],
+            'company'      => $b['company'],
+            'notes'        => $b['notes'],
+            'is_private'   => (bool) $b['is_private'],
             'public_label' => self::publicLabel($b),
-            'can_modify' => $active && $start > $now->modify('-' . self::GRACE_MINUTES . ' minutes'),
-            'can_cancel' => $active && $end > $now,
-            'is_past'    => $end <= $now,
+            'can_modify'   => $live && $start > $now->modify('-' . self::GRACE_MINUTES . ' minutes'),
+            'can_cancel'   => $live && $end > $now,
+            'is_past'      => $end <= $now,
             'manage_token' => $b['manage_token'],
+            'occasions'    => self::occasions($group, $b['start_utc']),
+            'mine'         => $mine,
         ];
     }
 
@@ -143,33 +162,132 @@ final class Bookings
         return $view;
     }
 
+    // ------------------------------------------------------------------ groups
+
+    /**
+     * Everything booked together with $b, whatever its status: one row per room per date, linked
+     * by series_id. A plain reservation is a group of one. Only rows with the same email belong,
+     * so a manage link can never show someone else's booking.
+     */
+    public static function groupOf(array $b): array
+    {
+        if (!$b['series_id']) {
+            return [$b];
+        }
+        return array_map([self::class, 'cast'], Db::all(
+            'SELECT * FROM bookings WHERE series_id = ? AND email <=> ? ORDER BY start_utc, id',
+            [$b['series_id'], $b['email']]
+        ));
+    }
+
+    /** The rows of $b's group at the same date and time (one per room), whatever their status. */
+    public static function occasionOf(array $b): array
+    {
+        return array_values(array_filter(self::groupOf($b), static fn ($r) => $r['start_utc'] === $b['start_utc']));
+    }
+
+    public static function isActive(array $b): bool
+    {
+        return $b['status'] === 'confirmed' || $b['status'] === 'pending';
+    }
+
+    /** Rows by date and time, earliest first: [start_utc => rows]. */
+    public static function byOccasion(array $rows): array
+    {
+        $out = [];
+        foreach ($rows as $r) {
+            $out[$r['start_utc']][] = $r;
+        }
+        ksort($out);
+        return $out;
+    }
+
+    /** The spaces these rows use, in booking-page order. */
+    public static function spacesOf(array $rows): array
+    {
+        $spaces = [];
+        foreach ($rows as $r) {
+            $spaces[$r['space_id']] ??= Spaces::find($r['space_id']) ?? ['id' => $r['space_id'], 'name' => 'Space', 'sort_order' => 999];
+        }
+        usort($spaces, static fn ($a, $b) => [$a['sort_order'], $a['name']] <=> [$b['sort_order'], $b['name']]);
+        return array_values($spaces);
+    }
+
+    /** One status for rows booked together: pending wins over confirmed; cancelled only if all are. */
+    public static function statusOf(array $rows): string
+    {
+        $statuses = array_column($rows, 'status');
+        return in_array('pending', $statuses, true) ? 'pending' : (in_array('confirmed', $statuses, true) ? 'confirmed' : 'cancelled');
+    }
+
+    /** Each date of a group for the manage page, with the link to manage that date. */
+    private static function occasions(array $group, string $currentStartUtc): array
+    {
+        $byOccasion = self::byOccasion($group);
+        $bookedDates = [];
+        foreach ($byOccasion as $rows) {
+            if (array_filter($rows, [self::class, 'isActive'])) {
+                $bookedDates[$rows[0]['date']] = true;
+            }
+        }
+        $out = [];
+        foreach ($byOccasion as $startUtc => $rows) {
+            $active = array_values(array_filter($rows, [self::class, 'isActive']));
+            if (!$active && isset($bookedDates[$rows[0]['date']]) && $startUtc !== $currentStartUtc) {
+                continue; // leftovers of a change on a date that is still booked
+            }
+            $shown = $active ?: $rows;
+            $out[] = [
+                'date'       => $rows[0]['date'],
+                'start_min'  => $rows[0]['start_min'],
+                'end_min'    => $rows[0]['end_min'],
+                'status'     => self::statusOf($shown),
+                'space_name' => implode(' + ', array_column(self::spacesOf($shown), 'name')),
+                'token'      => $shown[0]['manage_token'],
+                'is_past'    => $rows[0]['end_utc'] <= Time::nowDb(),
+                'current'    => $startUtc === $currentStartUtc,
+            ];
+        }
+        return $out;
+    }
+
     // ------------------------------------------------------------------ public (tenant) actions
 
     /**
-     * Create a reservation from the public booking page. The booking is 'pending' when the
-     * email address still needs the building manager's approval.
-     * Returns [booking, wasDuplicateSubmit, newApprovalRequest|null].
+     * Create a reservation from the public booking page: one or more rooms, on one date or
+     * weekly until a chosen date. It is all or nothing for each date: a date is only booked if
+     * every chosen room is free. Bookings are 'pending' while the email address needs the
+     * building manager's approval.
+     * Returns [first booking, wasDuplicateSubmit, newApprovalRequest|null].
      */
     public static function createPublic(array $in, string $ip): array
     {
         $requestId = self::cleanRequestId((string) ($in['request_id'] ?? ''));
         if ($requestId && ($existing = self::findByRequestId($requestId))) {
-            return [$existing, true];
+            return [$existing, true, null];
         }
 
         if (!RateLimit::hit("attempt:$ip", 120, 3600)) {
             throw new AppError('Too many attempts from this network. Please wait a little while and try again.', 429, null, 'rate_limited');
         }
 
-        [$space, $date, $start, $end, $startUtc, $endUtc] = self::parseSlot($in);
+        $spaces = self::parseSpaces($in);
+        $date = self::parseDate($in);
+        [$start, $end] = self::parseTimes($in);
         $person = self::parsePerson($in, true);
-        self::checkRules($space, $date, $start, $end);
+        $dates = self::publicDates($date, $in);
+        foreach ($dates as $d) {
+            foreach ($spaces as $space) {
+                self::checkRules($space, $d, $start, $end);
+            }
+        }
 
         // New email addresses wait for the building manager's approval (if turned on).
         $needsApproval = Settings::get('require_approval') && !EmailAccess::isApproved($person['email']);
         if ($needsApproval) {
+            // A reservation booked in one go (several rooms or dates) is one request.
             $waiting = (int) Db::value(
-                "SELECT COUNT(*) FROM bookings WHERE email = ? AND status = 'pending' AND end_utc > ?",
+                "SELECT COUNT(DISTINCT COALESCE(series_id, CONCAT('#', id))) FROM bookings WHERE email = ? AND status = 'pending' AND end_utc > ?",
                 [$person['email'], Time::nowDb()]
             );
             if ($waiting >= 3) {
@@ -181,42 +299,77 @@ final class Bookings
         }
         $maxUpcoming = (int) Settings::get('max_upcoming_per_email');
         if ($maxUpcoming > 0) {
+            // Each date counts once, however many rooms it uses.
             $upcoming = (int) Db::value(
-                "SELECT COUNT(*) FROM bookings WHERE email = ? AND status IN " . self::ACTIVE . " AND kind = 'reservation' AND end_utc > ?",
+                "SELECT COUNT(DISTINCT COALESCE(series_id, CONCAT('#', id)), start_utc) FROM bookings
+                  WHERE email = ? AND status IN " . self::ACTIVE . " AND kind = 'reservation' AND end_utc > ?",
                 [$person['email'], Time::nowDb()]
             );
             if ($upcoming >= $maxUpcoming) {
                 throw new AppError("You already have $upcoming upcoming reservations, which is the current limit. Please cancel one you no longer need, or contact management.", 400, 'email');
+            }
+            if ($upcoming + count($dates) > $maxUpcoming) {
+                throw new AppError("You have $upcoming upcoming reservations, and the limit is $maxUpcoming. Please choose an earlier end date so this repeat adds no more than " . ($maxUpcoming - $upcoming) . ' dates.', 400, 'repeat_until');
             }
         }
         $perHour = (int) Settings::get('rate_limit_per_hour');
         if (RateLimit::count("book:$ip", 3600) >= $perHour) {
             throw new AppError('Too many reservations from this network in the last hour. Please try again later or contact management.', 429, null, 'rate_limited');
         }
+        $skipConflicts = filter_var($in['skip_conflicts'] ?? false, FILTER_VALIDATE_BOOLEAN);
 
-        $result = Db::transaction(function () use ($space, $startUtc, $endUtc, $person, $requestId, $ip, $needsApproval) {
-            self::lockSpaces([$space['id']]);
+        $result = Db::transaction(function () use ($spaces, $dates, $start, $end, $person, $requestId, $ip, $needsApproval, $skipConflicts) {
+            self::lockSpaces(array_column($spaces, 'id'));
             if ($requestId && ($existing = self::findByRequestId($requestId))) {
-                return [$existing, true]; // the same form was submitted twice at once
+                return [$existing, true, []]; // the same form was submitted twice at once
             }
-            self::assertNoConflict($space, $startUtc, $endUtc);
-            $id = self::insert($person + [
-                'space_id'   => $space['id'],
-                'kind'       => 'reservation',
-                'status'     => $needsApproval ? 'pending' : 'confirmed',
-                'start_utc'  => $startUtc,
-                'end_utc'    => $endUtc,
-                'request_id' => $requestId,
-                'source'     => 'public',
-                'created_ip' => $ip,
-            ]);
-            return [self::find($id), false];
+            [$free, $conflicts] = self::freeDates($spaces, $dates, $start, $end);
+            if ($conflicts) {
+                if (count($dates) === 1) {
+                    $c = $conflicts[0];
+                    $what = $c['kind'] === 'block' ? 'is unavailable' : 'is already reserved';
+                    throw AppError::conflict(
+                        "Sorry — {$c['space']} $what from " . Time::fmtRange($c['start_min'], $c['end_min']) . '. Please choose another time.',
+                        ['conflict' => ['date' => $c['date'], 'start' => $c['start'], 'end' => $c['end'], 'space_id' => $c['space_id']]]
+                    );
+                }
+                $taken = count($dates) - count($free);
+                if (!$free) {
+                    throw AppError::conflict('All of these dates are taken, so nothing was booked. Please choose another time.', ['conflicts' => $conflicts, 'creatable' => 0, 'total' => count($dates)]);
+                }
+                if (!$skipConflicts) {
+                    throw AppError::conflict(
+                        $taken === 1 ? '1 of these dates is taken.' : "$taken of these dates are taken.",
+                        ['conflicts' => $conflicts, 'creatable' => count($free), 'total' => count($dates)]
+                    );
+                }
+            }
+            $seriesId = count($free) * count($spaces) > 1 ? Util::token(8) : null;
+            $ids = [];
+            foreach ($free as [$startUtc, $endUtc]) {
+                foreach ($spaces as $space) {
+                    $ids[] = self::insert($person + [
+                        'space_id'   => $space['id'],
+                        'kind'       => 'reservation',
+                        'status'     => $needsApproval ? 'pending' : 'confirmed',
+                        'start_utc'  => $startUtc,
+                        'end_utc'    => $endUtc,
+                        'series_id'  => $seriesId,
+                        'request_id' => $ids ? null : $requestId,
+                        'source'     => 'public',
+                        'created_ip' => $ip,
+                    ]);
+                }
+            }
+            return [self::find($ids[0]), false, $ids];
         });
 
         $newRequest = null;
         if (!$result[1]) {
             RateLimit::hit("book:$ip", PHP_INT_MAX, 3600);
-            Audit::log($result[0]['id'], $person['email'], $needsApproval ? 'requested' : 'created', self::summary($result[0]));
+            foreach ($result[2] as $id) {
+                Audit::log($id, $person['email'], $needsApproval ? 'requested' : 'created', self::summary(self::find($id)));
+            }
             if ($needsApproval) {
                 [$access, $isNew] = EmailAccess::request($person['email'], $person['name'], $person['company']);
                 if ($isNew) {
@@ -225,60 +378,143 @@ final class Bookings
                 }
             }
         }
-        // [booking, duplicate submit?, new approval request (email_access row) or null]
+        // [first booking, duplicate submit?, new approval request (email_access row) or null]
         return [$result[0], $result[1], $newRequest];
     }
 
-    /** Change a reservation via its manage link. Returns [booking, timeOrSpaceChanged]. */
+    /**
+     * Change one date of a reservation via its manage link: the date and time, and which rooms it
+     * uses (all of its rooms move together). Name, title, company, notes and privacy apply to
+     * every date booked together. Returns [booking, timeOrRoomsChanged].
+     */
     public static function updateByOwner(array $booking, array $in): array
     {
         $view = self::ownerView($booking);
         if (!$view['can_modify']) {
             throw new AppError(
-                $booking['status'] === 'cancelled'
+                $view['status'] === 'cancelled'
                     ? 'This reservation was cancelled, so it can’t be changed. You’re welcome to make a new one.'
                     : 'This reservation has already started, so it can’t be changed online. Please contact management for help.',
                 400
             );
         }
-        [$space, $date, $start, $end, $startUtc, $endUtc] = self::parseSlot($in);
+        $group = self::groupOf($booking);
+        $occasion = array_values(array_filter($group, static fn ($r) => $r['start_utc'] === $booking['start_utc']));
+        $active = array_values(array_filter($occasion, [self::class, 'isActive']));
+        $spaces = self::parseSpaces($in);
+        $date = self::parseDate($in);
+        [$start, $end] = self::parseTimes($in);
+        $startUtc = Time::localToUtc($date, $start);
+        $endUtc = Time::localToUtc($date, $end);
         $person = self::parsePerson($in + ['email' => $booking['email']], true);
-        $person['email'] = $booking['email']; // the email address stays tied to the booking
+        unset($person['email']); // the email address stays tied to the booking
 
-        $moved = $space['id'] !== $booking['space_id'] || $startUtc !== $booking['start_utc'] || $endUtc !== $booking['end_utc'];
+        $oldIds = array_column($active, 'space_id');
+        $newIds = array_column($spaces, 'id');
+        sort($oldIds);
+        sort($newIds);
+        $timeMoved = $startUtc !== $active[0]['start_utc'] || $endUtc !== $active[0]['end_utc'];
+        $moved = $timeMoved || $oldIds !== $newIds;
         if ($moved) {
-            self::checkRules($space, $date, $start, $end);
-        }
-
-        $updated = Db::transaction(function () use ($booking, $space, $startUtc, $endUtc, $person, $moved) {
-            $data = $person + ['updated_at' => Time::nowDb()];
-            if ($moved) {
-                self::lockSpaces([$space['id']]);
-                self::assertNoConflict($space, $startUtc, $endUtc, $booking['id']);
-                $data += [
-                    'space_id' => $space['id'], 'start_utc' => $startUtc, 'end_utc' => $endUtc,
-                    'reminder_sent_at' => null, 'followup_sent_at' => null,
-                ];
+            foreach ($spaces as $space) {
+                if ($timeMoved || !in_array($space['id'], $oldIds, true)) {
+                    self::checkRules($space, $date, $start, $end);
+                }
             }
-            Db::update('bookings', $data, 'id = :id', ['id' => $booking['id']]);
-            return self::find($booking['id']);
+        }
+        $status = self::statusOf($active);
+
+        $added = Db::transaction(function () use ($booking, $group, $occasion, $spaces, $newIds, $oldIds, $startUtc, $endUtc, $timeMoved, $person, $status) {
+            self::lockSpaces(array_merge($oldIds, $newIds));
+            $now = Time::nowDb();
+            $seriesId = $booking['series_id'];
+            if (!$seriesId && count($newIds) > 1) {
+                $seriesId = Util::token(8);
+                Db::update('bookings', ['series_id' => $seriesId], 'id = :id', ['id' => $booking['id']]);
+            }
+            foreach ($group as $r) {
+                Db::update('bookings', $person + ['updated_at' => $now], 'id = :id', ['id' => $r['id']]);
+            }
+
+            $added = [];
+            foreach ($spaces as $space) {
+                // Reuse this room's row on this date if there is one (even a removed one), so links keep working.
+                $rows = array_values(array_filter($occasion, static fn ($r) => $r['space_id'] === $space['id']));
+                usort($rows, static fn ($a, $b) => (int) self::isActive($b) <=> (int) self::isActive($a));
+                $row = $rows[0] ?? null;
+                self::assertNoConflict($space, $startUtc, $endUtc, $row['id'] ?? null);
+                if (!$row) {
+                    $added[] = self::insert($person + [
+                        'email'     => $booking['email'],
+                        'notify'    => $booking['notify'],
+                        'space_id'  => $space['id'],
+                        'kind'      => 'reservation',
+                        'status'    => $status,
+                        'start_utc' => $startUtc,
+                        'end_utc'   => $endUtc,
+                        'series_id' => $seriesId,
+                        'source'    => 'public',
+                    ]);
+                    continue;
+                }
+                $data = ['start_utc' => $startUtc, 'end_utc' => $endUtc, 'series_id' => $seriesId, 'updated_at' => $now];
+                if (!self::isActive($row)) {
+                    $data += ['status' => $status, 'cancelled_at' => null, 'cancelled_by' => null, 'cancel_reason' => null];
+                    $added[] = $row['id'];
+                }
+                if ($timeMoved || !self::isActive($row)) {
+                    $data += ['reminder_sent_at' => null, 'followup_sent_at' => null];
+                }
+                Db::update('bookings', $data, 'id = :id', ['id' => $row['id']]);
+            }
+            // Rooms no longer wanted are released; they stay with this date so the reservation is one piece.
+            foreach ($occasion as $r) {
+                if (in_array($r['space_id'], $newIds, true)) {
+                    continue;
+                }
+                if (self::isActive($r)) {
+                    self::markCancelled([$r['id']], (string) $booking['email'], 'Room removed from the reservation');
+                }
+                if ($timeMoved) {
+                    Db::update('bookings', ['start_utc' => $startUtc, 'end_utc' => $endUtc, 'series_id' => $seriesId], 'id = :id', ['id' => $r['id']]);
+                }
+            }
+            return $added;
         });
 
-        Audit::log($booking['id'], $booking['email'], 'updated', self::changes($booking, $updated));
+        $updated = self::find($booking['id']);
+        Audit::log($booking['id'], (string) $booking['email'], 'updated', self::changes($booking, $updated)
+            . ($oldIds !== $newIds ? '; rooms: ' . self::roomList($oldIds) . ' → ' . self::roomList($newIds) : ''));
+        foreach ($added as $id) {
+            if ($id !== $booking['id']) {
+                Audit::log($id, (string) $booking['email'], 'created', 'Room added to reservation ' . $booking['ref']);
+            }
+        }
         return [$updated, $moved];
     }
 
-    public static function cancelByOwner(array $booking): array
+    /**
+     * Cancel via the manage link: this date (every room on it), or with $scope 'all' every date
+     * of the reservation that hasn't ended. Returns [booking, cancelled bookings].
+     */
+    public static function cancelByOwner(array $booking, string $scope = 'date'): array
     {
-        if (!self::ownerView($booking)['can_cancel']) {
-            throw new AppError(
-                $booking['status'] === 'cancelled' ? 'This reservation is already cancelled.' : 'This reservation has already ended.',
-                400
-            );
+        $rows = $scope === 'all' ? self::groupOf($booking) : self::occasionOf($booking);
+        $ids = [];
+        foreach ($rows as $r) {
+            if (self::isActive($r) && $r['kind'] === 'reservation' && $r['end_utc'] > Time::nowDb()) {
+                $ids[] = $r['id'];
+            }
         }
-        self::markCancelled([$booking['id']], (string) $booking['email'], null);
-        Audit::log($booking['id'], (string) $booking['email'], 'cancelled', null);
-        return self::find($booking['id']);
+        if (!$ids) {
+            $ended = array_filter($rows, static fn ($r) => self::isActive($r) && $r['end_utc'] <= Time::nowDb());
+            throw new AppError($ended ? 'This reservation has already ended.' : 'This reservation is already cancelled.', 400);
+        }
+        self::markCancelled($ids, (string) $booking['email'], null);
+        foreach ($ids as $id) {
+            Audit::log($id, (string) $booking['email'], 'cancelled', $scope === 'all' ? 'Cancelled all remaining dates' : null);
+        }
+        return [self::find($booking['id']), array_map([self::class, 'find'], $ids)];
     }
 
     // ------------------------------------------------------------------ admin actions
@@ -302,9 +538,6 @@ final class Bookings
         }
         if (!$spaces) {
             throw new AppError('Please choose at least one space.', 400, 'space_ids');
-        }
-        if ($kind === 'reservation' && count($spaces) > 1) {
-            throw new AppError('A reservation is for one space. Use a block to close several spaces at once.', 400, 'space_ids');
         }
 
         $date = (string) ($in['date'] ?? '');
@@ -330,11 +563,14 @@ final class Bookings
             $toCreate = [];
             $conflicts = [];
             foreach ($dates as $d) {
+                $startUtc = Time::localToUtc($d, $start);
+                $endUtc = Time::localToUtc($d, $end);
+                $free = [];
+                $clash = false;
                 foreach ($spaces as $space) {
-                    $startUtc = Time::localToUtc($d, $start);
-                    $endUtc = Time::localToUtc($d, $end);
                     $conflict = self::findConflict($space['id'], $startUtc, $endUtc);
                     if ($conflict) {
+                        $clash = true;
                         $conflicts[] = [
                             'space'  => $space['name'],
                             'date'   => $d,
@@ -343,8 +579,12 @@ final class Bookings
                             'label'  => $conflict['kind'] === 'block' ? ($conflict['title'] ?: 'Block') : trim(($conflict['name'] ?? '') . ' ' . ($conflict['title'] ? '— ' . $conflict['title'] : '')),
                         ];
                     } else {
-                        $toCreate[] = [$space, $startUtc, $endUtc];
+                        $free[] = [$space, $startUtc, $endUtc];
                     }
+                }
+                // A block closes whatever is free; a reservation needs all of its rooms, or that date is skipped.
+                if ($kind === 'block' || !$clash) {
+                    array_push($toCreate, ...$free);
                 }
             }
             if ($conflicts && !$skipConflicts) {
@@ -523,26 +763,103 @@ final class Bookings
         if (!$booking) {
             throw new AppError('Booking not found.', 404);
         }
-        if ($scope !== 'following' || !$booking['series_id']) {
+        if (!in_array($scope, ['date', 'following'], true) || !$booking['series_id']) {
             return [$booking['id']];
         }
-        $sql = 'SELECT id FROM bookings WHERE series_id = ? AND start_utc >= ?' . ($confirmedOnly ? ' AND status IN ' . self::ACTIVE : '');
+        // 'date': every space booked with it for the same time; 'following': that and every later date.
+        $sql = 'SELECT id FROM bookings WHERE series_id = ? AND start_utc ' . ($scope === 'date' ? '=' : '>=') . ' ?' . ($confirmedOnly ? ' AND status IN ' . self::ACTIVE : '');
         return array_map('intval', array_column(Db::all($sql, [$booking['series_id'], $booking['start_utc']]), 'id'));
     }
 
-    /** @return array{0: array, 1: string, 2: int, 3: int, 4: string, 5: string} */
-    private static function parseSlot(array $in): array
+    /** The chosen spaces ('space_ids', or a single 'space_id'), in booking-page order. */
+    private static function parseSpaces(array $in): array
     {
-        $space = Spaces::find((int) ($in['space_id'] ?? 0));
-        if (!$space) {
-            throw new AppError('Please choose a space.', 400, 'space_id');
+        $ids = isset($in['space_ids']) ? (array) $in['space_ids'] : [$in['space_id'] ?? 0];
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ids))));
+        if (!$ids) {
+            throw new AppError('Please choose a space.', 400, 'space_ids');
         }
+        if (count($ids) > 10) {
+            throw new AppError('Please choose up to 10 spaces at once.', 400, 'space_ids');
+        }
+        $spaces = [];
+        foreach ($ids as $id) {
+            $space = Spaces::find($id);
+            if (!$space) {
+                throw new AppError('Please choose a space.', 400, 'space_ids');
+            }
+            $spaces[] = $space;
+        }
+        usort($spaces, static fn ($a, $b) => [$a['sort_order'], $a['name']] <=> [$b['sort_order'], $b['name']]);
+        return $spaces;
+    }
+
+    private static function parseDate(array $in): string
+    {
         $date = (string) ($in['date'] ?? '');
         if (!Time::isDate($date)) {
             throw new AppError('Please choose a valid date.', 400, 'date');
         }
-        [$start, $end] = self::parseTimes($in);
-        return [$space, $date, $start, $end, Time::localToUtc($date, $start), Time::localToUtc($date, $end)];
+        return $date;
+    }
+
+    /** The dates of a tenant's reservation: just $date, or weekly until 'repeat_until'. */
+    private static function publicDates(string $date, array $in): array
+    {
+        $repeat = (string) ($in['repeat'] ?? '');
+        if ($repeat === '' || $repeat === 'none') {
+            return [$date];
+        }
+        if ($repeat !== 'weekly') {
+            throw new AppError('Reservations can repeat every week.', 400, 'repeat');
+        }
+        $weeks = (int) Settings::get('repeat_max_weeks');
+        if ($weeks <= 0) {
+            throw new AppError('Repeating reservations are turned off. Please reserve each date separately, or contact management.', 400, 'repeat');
+        }
+        $until = (string) ($in['repeat_until'] ?? '');
+        if (!Time::isDate($until) || $until < Time::addDays($date, 7)) {
+            throw new AppError('Please choose an end date at least a week after the first date.', 400, 'repeat_until');
+        }
+        $last = Time::addDays(Time::today(), $weeks * 7);
+        if ($until > $last) {
+            throw new AppError("Repeating reservations can be made up to $weeks weeks ahead, through " . Time::fmtDate($last) . '.', 400, 'repeat_until');
+        }
+        return self::occurrences($date, 'weekly', $until);
+    }
+
+    /**
+     * Which dates have every space free at this time. Call inside the lockSpaces() transaction.
+     * Returns [[[startUtc, endUtc], ...], conflicts]. Conflicts carry no names, so tenants can see them.
+     */
+    private static function freeDates(array $spaces, array $dates, int $start, int $end): array
+    {
+        $free = [];
+        $conflicts = [];
+        foreach ($dates as $d) {
+            $startUtc = Time::localToUtc($d, $start);
+            $endUtc = Time::localToUtc($d, $end);
+            $clear = true;
+            foreach ($spaces as $space) {
+                $c = self::findConflict($space['id'], $startUtc, $endUtc);
+                if ($c) {
+                    $clear = false;
+                    $conflicts[] = [
+                        'date' => $d, 'space_id' => $space['id'], 'space' => $space['name'], 'kind' => $c['kind'],
+                        'start' => $c['start'], 'end' => $c['end'], 'start_min' => $c['start_min'], 'end_min' => $c['end_min'],
+                    ];
+                }
+            }
+            if ($clear) {
+                $free[] = [$startUtc, $endUtc];
+            }
+        }
+        return [$free, $conflicts];
+    }
+
+    private static function roomList(array $spaceIds): string
+    {
+        return implode(' + ', array_map(static fn ($id) => Spaces::find((int) $id)['name'] ?? '?', $spaceIds));
     }
 
     private static function parseTimes(array $in): array

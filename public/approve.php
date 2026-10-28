@@ -12,7 +12,6 @@ use GPC\EmailAccess;
 use GPC\Mailer;
 use GPC\Notify;
 use GPC\Page;
-use GPC\Spaces;
 use GPC\Time;
 
 $e = static fn ($v) => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
@@ -32,12 +31,12 @@ try {
         if (($_POST['decision'] ?? '') === 'approve') {
             $r = EmailAccess::approve($access, 'manager (email link)', !empty($_POST['whole_domain']));
             $emailIds = Notify::decisionEmails($r['confirmed'], true);
-            $result = ['approved', $r['pattern'], count($r['confirmed'])];
+            $result = ['approved', $r['pattern'], count(Notify::summaries($r['confirmed']))];
         } elseif (($_POST['decision'] ?? '') === 'decline') {
             $reason = (string) ($_POST['reason'] ?? '');
             $cancelled = EmailAccess::decline($access, 'manager (email link)', $reason);
             $emailIds = Notify::decisionEmails($cancelled, false, $reason);
-            $result = ['declined', $access['pattern'], count($cancelled)];
+            $result = ['declined', $access['pattern'], count(Notify::summaries($cancelled))];
         }
     }
     $bookings = $access && !$result ? EmailAccess::pendingBookings($access['pattern']) : [];
@@ -85,8 +84,8 @@ ob_start();
     <p class="muted small">Asked <?= $e(Time::utcToLocal((string) $access['requested_at'])->format('l, F j \a\t g:i A')) ?>. Approving adds this address to the approved list; future reservations from it are confirmed instantly.</p>
     <?php if ($bookings): ?>
     <div class="ticket" style="margin:18px 0 22px">
-      <?php foreach ($bookings as $b): $sp = Spaces::find($b['space_id']); ?>
-      <div class="ticket-row"><span><?= $e($sp['name'] ?? '') ?></span><strong><?= $e(Time::fmtDate($b['date']) . ', ' . Time::fmtRange($b['start_min'], $b['end_min'])) ?><?= $b['title'] ? '<br><span class="muted" style="width:auto;font-weight:400">' . $e($b['title']) . '</span>' : '' ?></strong></div>
+      <?php foreach (Notify::summaries($bookings) as $r): ?>
+      <div class="ticket-row"><span><?= $e($r['rooms']) ?></span><strong><?= nl2br($e($r['when']), false) ?><?= $r['title'] !== '' ? '<br><span class="muted" style="width:auto;font-weight:400">' . $e($r['title']) . '</span>' : '' ?></strong></div>
       <?php endforeach; ?>
     </div>
     <?php else: ?>

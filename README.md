@@ -17,8 +17,14 @@ simple admin area for reservations, blocks, rooms, rules and email.
   tap on phones (with a swipeable date strip and a floating **Reserve** button).
 - Booking form in a few fields: remembers name/email/company on that device, live availability
   check, quick duration chips, an optional "keep my name off the shared calendar".
+- **Several spaces at once** (e.g. the conference room and the community space, 10–2): tick each
+  one. Every space must be free, or nothing is booked.
+- **Repeat every week** up to 12 weeks ahead (adjustable in Settings). If some dates are taken,
+  the form lists them and offers to reserve the rest.
+- One confirmation, and one reminder and one after-use note per date, however many spaces it uses.
 - Confirmation with Add-to-calendar (.ics and Google Calendar) and a private **Manage
-  reservation** link: change time, change room or cancel, with no password.
+  reservation** link: change the time or spaces for a date, cancel one date or all of them, with
+  no password.
 - "Find my reservations": emails fresh manage links if the confirmation is lost.
 - New email addresses are approved once by the building manager: the booking is held as
   "pending", the manager approves or declines from an email link, and approved people (or whole
@@ -27,8 +33,9 @@ simple admin area for reservations, blocks, rooms, rules and email.
 **For management** (`/book/admin/`)
 - Dashboard: today, this week, this month, booked hours, most-used space, upcoming, recent
   cancellations, system health.
-- Calendar with full details. Create, edit, cancel or delete reservations; block a room, several
-  rooms or a whole day; repeating bookings and blocks with conflict reporting.
+- Calendar with full details. Create, edit, cancel or delete reservations (one or several
+  spaces); block a room, several rooms or a whole day; repeating bookings and blocks with
+  conflict reporting.
 - Reservation search, filters, CSV export, per-booking history and email log.
 - Approved emails: the list of addresses and tenant domains that book instantly, plus pending
   requests with one-click Approve / Approve whole company / Decline.

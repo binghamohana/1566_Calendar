@@ -35,7 +35,9 @@ try {
             $fail(404, 'Reservation not found.');
             return;
         }
-        $send(Ics::forBooking($booking, Spaces::find($booking['space_id'])), 'reservation-' . $booking['ref'] . '.ics', true);
+        // Every room and date still booked together with it (or just this one, if it was cancelled).
+        $rows = array_values(array_filter(Bookings::groupOf($booking), [Bookings::class, 'isActive'])) ?: [$booking];
+        $send(Ics::forBookings($rows), 'reservation-' . $booking['ref'] . '.ics', true);
         return;
     }
 

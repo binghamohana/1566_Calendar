@@ -10,17 +10,37 @@ Sign in with your admin email and password. Sessions last 14 days per device.
 |---|---|
 | See today / this week | **Dashboard** (counts, hours, upcoming, recent cancellations) or **Calendar** |
 | See who booked something | Click the booking in **Calendar**, or search in **Reservations**. Shows name, email, company, notes, when and how it was booked, every email sent, and a change history |
-| Book for a tenant | **New reservation** (top right), or click an open time in **Calendar**. Admins can book outside opening hours and limits |
+| Book for a tenant | **New reservation** (top right), or click an open time in **Calendar**. Tick more than one space to book them together. Admins can book outside opening hours and limits |
 | Change or move a booking | Open it → **Edit**. Tick "email the updated details" to notify them |
-| Cancel | Open it → **Cancel**. Optional reason (included in the email); option to cancel all later dates of a repeating series |
+| Cancel | Open it → **Cancel**. Optional reason (included in the email). For a reservation of several spaces or dates, choose: only this space, every space on that date, or this and all later dates |
 | Delete outright | Open it → **Delete** (for mistakes; no email, history removed). Prefer Cancel to keep a record |
 | Block a room (maintenance, private event) | **Block time** → pick one or more spaces, date and time. The reason shows publicly as "Unavailable · reason" |
 | Block an entire day (holiday) | **Block time** → tick every space → **All day** |
 | Close for several days | **Block time** → **All day** → Repeat **Every day** until the last day |
-| Repeating booking or block | Choose a Repeat (daily, weekdays, weekly, every 2 weeks, monthly) and an end date. If some dates are taken you'll see the list and can **skip those and create the rest**. Nothing is ever double-booked |
+| Repeating booking or block | Choose a Repeat (daily, weekdays, weekly, every 2 weeks, monthly) and an end date. If some dates are taken you'll see the list and can **skip those and create the rest** (a reservation of several spaces skips the whole date). Nothing is ever double-booked |
 | Search | **Reservations**: search name, email, company, title or reference; filter by space, date range, status, type |
 | Export | **Reservations → Export CSV** (follows the current filters) |
 | Give a tenant their link again | Open the booking → **Manage link → Copy**. Tenants can also use "Find my reservations" on the public page |
+
+## Tenants booking several spaces or every week
+
+- **Several spaces:** on the booking form a tenant ticks each space they want (for example the
+  2nd-floor conference room and the community space, Saturday 10–2). Every space must be free at
+  that time, or nothing is booked and the form says which one is taken.
+- **Repeat every week:** they tick **Repeat every Saturday** and choose an end date, up to 12 weeks
+  ahead. If some of those dates are taken, the form lists them and offers to reserve the rest.
+  Change the 12 weeks (or set 0 to turn repeats off) in **Settings → Booking rules → Weekly
+  repeats**. Management can always set up longer standing bookings with **New reservation → Repeat**.
+- **Emails:** one confirmation for the whole thing; one reminder and one after-use note per date,
+  naming every space.
+- **Their manage link** lists every date. They can change the time or spaces for one date, cancel
+  one date, or cancel all remaining dates.
+- **In admin**, each space on each date is its own booking (so the calendar and reports stay
+  accurate). Opening one shows the other spaces booked with it and how many dates the
+  reservation has.
+- **Limits:** "Max upcoming bookings per person" counts dates, not spaces, so a 10-week repeat of
+  two rooms counts as 10. A new address's repeat is one approval request; approving it confirms
+  every date.
 
 ## Approved emails (who can book instantly)
 

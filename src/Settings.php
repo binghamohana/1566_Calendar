@@ -34,7 +34,8 @@ final class Settings
         'max_duration_minutes'   => ['int', 720, [15, 1440]],
         'max_days_ahead'         => ['int', 120, [1, 730]],
         'min_notice_minutes'     => ['int', 0, [0, 10080]],
-        'max_upcoming_per_email' => ['int', 25, [0, 1000]],   // 0 = unlimited
+        'max_upcoming_per_email' => ['int', 25, [0, 1000]],   // 0 = unlimited (each date counts once, however many rooms)
+        'repeat_max_weeks'       => ['int', 12, [0, 52]],     // tenants can repeat weekly up to this many weeks ahead; 0 = off
         'require_approval'       => ['bool', true],            // new email addresses need the building manager's OK
         'approval_emails'        => ['string', ''],            // who approves; blank = management email, else all admins
         'rate_limit_per_hour'    => ['int', 30, [1, 1000]],    // new bookings per IP address per hour (tenants may share one office IP)

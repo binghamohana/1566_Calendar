@@ -87,6 +87,7 @@ final class EmailAccess
             $row['id'] = (int) $row['id'];
             $row['is_domain'] = str_starts_with($row['pattern'], '@');
             $row['bookings'] = $row['status'] === 'pending' ? self::pendingBookings($row['pattern']) : [];
+            $row['requests'] = Notify::summaries($row['bookings']); // one line per reservation (rooms + dates)
             $row['domain'] = $row['is_domain'] ? substr($row['pattern'], 1) : self::domainOf($row['pattern']);
             $row['domain_ok'] = !$row['is_domain'] && !self::isPublicDomain($row['domain']);
             unset($row['token']);

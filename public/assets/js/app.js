@@ -392,17 +392,22 @@
   }
 
   function drawManage(first) {
-    var b = managed, space = spaceById(b.space_id) || { name: b.space_name, color: '#3E5C4A', hours: null };
-    var badge = b.status === 'cancelled' ? '<span class="badge cancelled">Cancelled</span>'
-      : (b.status === 'pending' ? '<span class="badge pending">Awaiting approval</span>'
-      : (b.is_past ? '<span class="badge past">Completed</span>' : '<span class="badge ok">' + GPC.icon('check').replace('<svg', '<svg width="12" height="12"') + ' Confirmed</span>'));
+    var b = managed;
+    var rooms = (b.spaces || [{ id: b.space_id, name: b.space_name }]).map(function (s) {
+      return spaceById(s.id) || { id: s.id, name: s.name, short_name: s.name, color: '#3E5C4A', hours: null, max_duration_minutes: +boot.rules.max_duration_minutes };
+    });
+    var dates = b.occasions || [];
+    var series = dates.length > 1;
+    var remaining = dates.filter(function (o) { return o.status !== 'cancelled' && !o.is_past; });
+    var badge = statusBadge(b.status, b.is_past);
     var $card = $('<div class="manage-card"></div>');
     $card.append($('<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"></div>').append(
       $('<span class="eyebrow"></span>').text('Your reservation · Ref ' + b.ref), badge));
-    $card.append($('<h1></h1>').text(b.space_name));
+    $card.append($('<h1></h1>').toggleClass('is-long', rooms.length > 1).text(b.space_name));
     $card.append($('<div class="manage-when"></div>').text(GPC.date.long(b.date, true) + ' · ' + GPC.time.range(b.start_min, b.end_min) + ' (' + GPC.time.duration(b.end_min - b.start_min) + ')'));
     var $grid = $('<div class="manage-grid"></div>');
     [['Reserved by', b.name], ['Email', b.email], ['Title', b.title], ['Company', b.company], ['Notes', b.notes],
+      ['Repeats', series ? dates.length + ' dates · ' + remaining.length + ' still to come' : null],
       ['Others see', '“' + b.public_label + '”']].forEach(function (r) {
       if (r[1]) $grid.append($('<div></div>').append($('<span></span>').text(r[0]), $('<strong></strong>').text(r[1])));
     });
@@ -414,45 +419,73 @@
         '. Your time is held for you, and you’ll get a confirmation email as soon as it’s approved. New addresses only need approving once.'));
     }
     if (b.status === 'cancelled') {
-      $card.append('<div class="alert alert-info">This reservation was cancelled, and the time is open for others.</div>');
+      $card.append($('<div class="alert alert-info"></div>').text(series
+        ? 'This date was cancelled, and the time is open for others.' + (remaining.length ? ' Your other dates are listed below.' : '')
+        : 'This reservation was cancelled, and the time is open for others.'));
       $acts.append('<a class="btn" href="./">Make a new reservation</a>');
     } else if (b.is_past) {
       $acts.append('<a class="btn" href="./">Book again</a>');
     } else {
       if (b.can_modify) {
-        $acts.append($('<button type="button" class="btn">Change time or room</button>').on('click', function () { editManaged(); }));
+        $acts.append($('<button type="button" class="btn"></button>').text(series ? 'Change this date' : (rooms.length > 1 ? 'Change time or spaces' : 'Change time or room')).on('click', function () { editManaged(); }));
       } else {
         $card.append('<div class="alert alert-info">This reservation is in progress. To make changes now, please contact management.</div>');
       }
       if (b.status !== 'pending') {
-        $acts.append($('<a class="btn btn-ghost" download></a>').attr('href', 'ics.php?t=' + encodeURIComponent(b.manage_token)).html(GPC.icon('cal') + ' Add to calendar'));
+        $acts.append($('<a class="btn btn-ghost" download></a>').attr('href', 'ics.php?t=' + encodeURIComponent(b.manage_token)).html(GPC.icon('cal') + (series ? ' Add all dates to calendar' : ' Add to calendar')));
       }
       if (b.can_cancel) {
-        $acts.append($('<button type="button" class="btn btn-danger-ghost"></button>').text(b.status === 'pending' ? 'Cancel request' : 'Cancel reservation').on('click', cancelManaged));
+        $acts.append($('<button type="button" class="btn btn-danger-ghost"></button>')
+          .text(series ? 'Cancel this date' : (b.status === 'pending' ? 'Cancel request' : 'Cancel reservation'))
+          .on('click', function () { cancelManaged('date'); }));
       }
     }
+    // "Cancel all" whenever it would do more than "Cancel this date".
+    if (series && remaining.length > (b.can_cancel ? 1 : 0)) {
+      $acts.append($('<button type="button" class="btn btn-danger-ghost"></button>').text('Cancel all ' + remaining.length + ' remaining dates')
+        .on('click', function () { cancelManaged('all'); }));
+    }
     $card.append($acts);
+
+    if (series) {
+      var sameRooms = dates.every(function (o) { return o.space_name === dates[0].space_name; });
+      var $list = $('<div class="occ-list"></div>');
+      dates.forEach(function (o) {
+        var $o = o.current ? $('<div class="occ is-current" aria-current="true"></div>') : $('<a class="occ"></a>').attr('href', 'manage.php?t=' + encodeURIComponent(o.token));
+        $o.append(
+          $('<span class="occ-date"></span>').text(GPC.date.short(o.date)),
+          $('<span class="occ-time"></span>').text(GPC.time.range(o.start_min, o.end_min) + (sameRooms ? '' : ' · ' + o.space_name)),
+          o.current ? $('<span class="badge past">Viewing</span>') : statusBadge(o.status, o.is_past, true));
+        $list.append($o);
+      });
+      $card.append($('<h2 class="occ-title"></h2>').text('All dates'), $list);
+    }
 
     var $wrap = $('<div class="wrap manage"></div>').append($card);
     if (b.status === 'confirmed' && b.can_modify) {
       $wrap.append($('<h2 class="section-title"></h2>').text('Availability on ' + GPC.date.long(b.date)));
-      $wrap.append($('<p class="muted small" style="margin:-6px 0 12px">Pick an open time to move your reservation.</p>'));
+      $wrap.append($('<p class="muted small" style="margin:-6px 0 12px"></p>').text('Pick an open time to move ' + (series ? 'this date of your reservation' : 'your reservation') + '.'));
       var $cal = $('<div></div>').appendTo($wrap);
       $app.empty().append($wrap);
       cal = new GPC.Calendar($cal, {
         increment: +boot.rules.time_increment,
-        maxDuration: space.max_duration_minutes || +boot.rules.max_duration_minutes,
+        maxDuration: Math.min.apply(null, rooms.map(function (s) { return s.max_duration_minutes || +boot.rules.max_duration_minutes; })),
         defaultDuration: b.end_min - b.start_min,
         onSelect: function (col, s, e) { editManaged(s, e); }
       });
       loadDay(b.date).then(function (list) {
-        var events = list.filter(function (x) { return x.space_id === b.space_id; }).map(function (x) {
-          var isThis = x.ref === b.ref;
-          return { col: 'c', start: x.start_min, end: x.end_min, kind: x.kind, title: isThis ? 'This reservation' : x.label, mine: isThis ? null : null, current: isThis, color: space.color };
+        var refs = b.refs || [b.ref];
+        var cols = rooms.map(function (sp) {
+          return { key: 's' + sp.id, spaceId: sp.id, date: b.date, title: rooms.length > 1 ? (sp.short_name || sp.name) : sp.name, color: sp.color, hours: GPC.hoursOn(sp, b.date) };
         });
-        var hrs = GPC.hoursOn(space, b.date);
-        var lo = hrs ? Math.floor(hrs[0] / 60) * 60 : 0, hi = hrs ? Math.ceil(hrs[1] / 60) * 60 : 1440;
-        cal.render({ columns: [{ key: 'c', spaceId: b.space_id, date: b.date, title: space.name, color: space.color, hours: hrs }], events: events, today: boot.today, nowMin: boot.nowMin, range: [lo, hi] });
+        var events = list.filter(function (x) { return cols.some(function (c) { return c.spaceId === x.space_id; }); }).map(function (x) {
+          var isThis = refs.indexOf(x.ref) >= 0;
+          return { col: 's' + x.space_id, start: x.start_min, end: x.end_min, kind: x.kind, title: isThis ? 'This reservation' : x.label, mine: null, current: isThis, color: (spaceById(x.space_id) || {}).color };
+        });
+        var lo = 1440, hi = 0;
+        cols.forEach(function (c) { var h = c.hours || [0, 1440]; lo = Math.min(lo, h[0]); hi = Math.max(hi, h[1]); });
+        lo = Math.floor(lo / 60) * 60; hi = Math.ceil(hi / 60) * 60;
+        cal.render({ columns: cols, events: events, today: boot.today, nowMin: boot.nowMin, range: [lo, hi] });
         cal.scrollToMin(Math.max(lo, b.start_min - 90));
       });
     } else {
@@ -462,10 +495,17 @@
     if (first && b.status === 'confirmed') history.replaceState(null, '', location.pathname + location.search);
   }
 
+  function statusBadge(status, isPast, small) {
+    if (status === 'cancelled') return $('<span class="badge cancelled">Cancelled</span>');
+    if (status === 'pending') return $('<span class="badge pending">Awaiting approval</span>');
+    if (isPast) return $('<span class="badge past">Completed</span>');
+    return $('<span class="badge ok"></span>').html((small ? '' : GPC.icon('check').replace('<svg', '<svg width="12" height="12"') + ' ') + 'Confirmed');
+  }
+
   function editManaged(start, end) {
     GPC.BookingForm.open({
       mode: 'edit', booking: managed, token: boot.manage_token,
-      spaceId: managed.space_id, date: managed.date,
+      spaceIds: managed.space_ids || [managed.space_id], date: managed.date,
       start: start != null ? start : managed.start_min, end: end != null ? end : managed.end_min,
       loadDay: loadDay,
       onDone: function (bk) { managed = bk; invalidate(); drawManage(false); },
@@ -473,19 +513,25 @@
     });
   }
 
-  function cancelManaged() {
+  function cancelManaged(scope) {
+    var all = scope === 'all';
+    var dates = managed.occasions || [];
+    var left = dates.filter(function (o) { return o.status !== 'cancelled' && !o.is_past; }).length;
     GPC.confirm({
-      title: 'Cancel this reservation?',
-      message: managed.space_name + ' · ' + GPC.date.long(managed.date) + ', ' + GPC.time.range(managed.start_min, managed.end_min) + '. The time will open up for others right away.',
-      ok: 'Yes, cancel it', cancel: 'Keep it', danger: true
+      title: all ? 'Cancel all ' + left + ' remaining dates?' : (dates.length > 1 ? 'Cancel this date?' : 'Cancel this reservation?'),
+      message: all
+        ? managed.space_name + ' · every date from now on. The times will open up for others right away.'
+        : managed.space_name + ' · ' + GPC.date.long(managed.date) + ', ' + GPC.time.range(managed.start_min, managed.end_min) + '. The time will open up for others right away.' +
+          (dates.length > 1 ? ' Your other dates stay booked.' : ''),
+      ok: all ? 'Yes, cancel them all' : 'Yes, cancel it', cancel: 'Keep it', danger: true
     }).then(function (yes) {
       if (!yes) return;
-      GPC.api('api.php?action=cancel', 'POST', { t: boot.manage_token }).then(function (res) {
+      GPC.api('api.php?action=cancel', 'POST', { t: boot.manage_token, scope: all ? 'all' : 'date' }).then(function (res) {
         managed = res.booking;
         GPC.rememberMine(managed);
         invalidate();
         drawManage(false);
-        GPC.toast('Reservation cancelled. We’ve emailed you a confirmation.');
+        GPC.toast((res.cancelled > 1 ? res.cancelled + ' dates cancelled.' : (dates.length > 1 ? 'Date cancelled.' : 'Reservation cancelled.')) + ' We’ve emailed you a confirmation.');
       }, function (err) { GPC.toast(err.message, 'error'); });
     });
   }

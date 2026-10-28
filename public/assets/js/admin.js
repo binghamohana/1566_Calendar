@@ -380,7 +380,10 @@
       row('Public sees', '“' + b.public_label + '”' + (b.is_private ? ' (marked private)' : ''));
       row('Booked', (b.source === 'admin' ? 'By ' + (b.created_by_name || 'an administrator') : 'Online by the tenant') + ' · ' + localDateTime(b.created_at) + (b.created_ip ? ' · IP ' + b.created_ip : ''));
       if (b.status === 'cancelled') row('Cancelled', localDateTime(b.cancelled_at) + ' by ' + (b.cancelled_by || '') + (b.cancel_reason ? ' — ' + b.cancel_reason : ''));
-      if (b.series_id) row('Repeats', b.series_count + ' active booking' + (b.series_count === 1 ? '' : 's') + ' in this series');
+      if (b.together && b.together.length) {
+        row('Booked with', b.together.map(function (t) { return (spaceById(t.space_id) || { name: 'Space' }).name; }).join(', ') + ' (same time, same reservation)');
+      }
+      if (b.series_dates > 1) row('Repeats', b.series_dates + ' active dates in this reservation');
       if (b.kind === 'reservation') row('Emails', b.notify ? 'Automated emails on' : 'Automated emails off');
       if (b.manage_url) {
         row('Manage link', $('<div class="copy-row"></div>').append($('<input class="input" readonly>').val(b.manage_url),
@@ -423,11 +426,7 @@
 
   function cancelDialog(b, parent) {
     var $f = $('<form></form>');
-    if (b.series_id) {
-      $f.append('<div class="field"><span class="field-label">Which bookings?</span>' +
-        '<label class="check"><input type="radio" name="scope" value="one" checked> Only this one (' + esc(GPC.date.short(b.date)) + ')</label>' +
-        '<label class="check"><input type="radio" name="scope" value="following"> This and all later ones in the series</label></div>');
-    }
+    $f.append(scopeChoice(b, 'scope'));
     $f.append('<div class="field"><label for="cx-reason">Reason <span class="opt">(optional — included in the email)</span></label><input class="input" id="cx-reason" name="reason" maxlength="255"></div>');
     if (b.kind === 'reservation' && b.email) $f.append($('<label class="check"><input type="checkbox" name="notify" checked> <span></span></label>').find('span').text('Email ' + b.name + ' that it was cancelled').end());
     var $ok = $('<button type="button" class="btn btn-danger">Cancel booking</button>');
@@ -442,11 +441,23 @@
     });
   }
 
+  /** "Which bookings?" for a booking that is part of a multi-space or repeating reservation. */
+  function scopeChoice(b, name) {
+    var sp = spaceById(b.space_id) || { name: 'this space' };
+    var options = [['one', (b.together && b.together.length ? 'Only ' + sp.name : 'Only this one') + ' (' + GPC.date.short(b.date) + ')']];
+    if (b.together && b.together.length) options.push(['date', 'Every space on ' + GPC.date.short(b.date) + ' (' + (b.together.length + 1) + ')']);
+    if (b.series_dates > 1) options.push(['following', 'This and all later dates' + (b.together && b.together.length ? ', every space' : '')]);
+    if (options.length < 2) return $();
+    var $field = $('<div class="field"><span class="field-label">Which bookings?</span></div>');
+    options.forEach(function (o, i) {
+      $field.append($('<label class="check"></label>').append($('<input type="radio">').attr('name', name).val(o[0]).prop('checked', i === 0), document.createTextNode(' ' + o[1])));
+    });
+    return $field;
+  }
+
   function deleteDialog(b, parent) {
     var $f = $('<div><p style="margin:0 0 12px;color:var(--ink-2)">Deleting removes the booking and its history permanently. To keep a record, cancel instead. No email is sent.</p></div>');
-    if (b.series_id) {
-      $f.append('<label class="check"><input type="radio" name="dscope" value="one" checked> Only this one</label><label class="check" style="margin-top:6px"><input type="radio" name="dscope" value="following"> This and all later ones in the series</label>');
-    }
+    $f.append(scopeChoice(b, 'dscope'));
     var $ok = $('<button type="button" class="btn btn-danger">Delete permanently</button>');
     var d = GPC.dialog({ title: 'Delete booking?', body: $f, foot: $ok });
     $ok.on('click', function () {
@@ -478,11 +489,15 @@
       $f.append($('<div class="seg-kind"></div>').append(
         $('<button type="button" data-k="reservation">Reservation</button>'), $('<button type="button" data-k="block">Block time</button>')));
     }
-    $f.append('<div class="field k-res"><label for="af-space">Space</label><select class="select" id="af-space" name="space_id"></select></div>');
-    $f.append('<div class="field k-block"><span class="field-label">Spaces to block</span><div class="space-checks"></div></div>');
+    if (edit) {
+      $f.append('<div class="field"><label for="af-space">Space</label><select class="select" id="af-space" name="space_id"></select></div>');
+    } else {
+      $f.append('<div class="field"><span class="field-label af-spaces-label">Spaces</span><div class="space-checks"></div>' +
+        '<div class="field-hint k-res">Choose more than one to reserve them together.</div></div>');
+    }
     spaces.forEach(function (s) {
       $f.find('[name=space_id]').append($('<option></option>').val(s.id).text(s.name + (s.is_active ? '' : ' (not bookable)')));
-      $f.find('.space-checks').append($('<label class="check"></label>').append($('<input type="checkbox" name="space_ids">').val(s.id), document.createTextNode(s.name)));
+      $f.find('.space-checks').append($('<label class="check"></label>').append($('<input type="checkbox" name="space_ids">').val(s.id), document.createTextNode(s.name + (s.is_active ? '' : ' (not bookable)'))));
     });
     $f.append('<div class="row"><div class="field"><label for="af-date">Date</label><input class="input" type="date" id="af-date" name="date"></div>' +
       '<div class="field" style="justify-content:flex-end"><label class="check" style="min-height:46px;align-items:center"><input type="checkbox" name="all_day"> All day</label></div></div>');
@@ -509,15 +524,12 @@
     // Prefill
     $f.find('[name=date]').val(edit ? edit.date : (o.date || S.today));
     $f.find('[name=space_id]').val(String(edit ? edit.space_id : (o.space_id || spaces[0].id)));
-    $f.find('[name=space_ids]').filter(function () { return +this.value === +(o.space_id || 0); }).prop('checked', true);
+    $f.find('[name=space_ids]').filter(function () { return +this.value === +(o.space_id || spaces[0].id); }).prop('checked', true);
     if (edit) {
-      $f.find('.space-checks').closest('.field').remove();
       $f.find('[name=name]').val(edit.name || ''); $f.find('[name=email]').val(edit.email || '');
       $f.find('[name=company]').val(edit.company || ''); $f.find('[name=title]').val(edit.kind === 'reservation' ? (edit.title || '') : '');
       $f.find('[name=reason]').val(edit.kind === 'block' ? (edit.title || '') : '');
       $f.find('[name=notes]').val(edit.notes || ''); $f.find('[name=is_private]').prop('checked', edit.is_private); $f.find('[name=notify]').prop('checked', edit.notify);
-      if (edit.kind === 'block') $f.find('.k-res').first().replaceWith('<div class="field"><label for="af-space">Space</label><select class="select" id="af-space" name="space_id"></select></div>');
-      if (edit.kind === 'block') { spaces.forEach(function (s) { $f.find('[name=space_id]').append($('<option></option>').val(s.id).text(s.name)); }); $f.find('[name=space_id]').val(String(edit.space_id)); }
     }
     var allDay = start === 0 && end === 1440;
     $f.find('[name=all_day]').prop('checked', allDay);
@@ -529,7 +541,7 @@
       $f.find('.seg-kind button').removeClass('is-on').filter('[data-k="' + k + '"]').addClass('is-on');
       $f.find('.k-res').toggle(k === 'reservation');
       $f.find('.k-block').toggle(k === 'block');
-      if (k === 'block' && !$f.find('[name=space_ids]:checked').length) $f.find('[name=space_ids]').filter(function () { return this.value === $f.find('[name=space_id]').val(); }).prop('checked', true);
+      $f.find('.af-spaces-label').text(k === 'block' ? 'Spaces to block' : 'Spaces');
       if (!edit) d.setTitle(k === 'block' ? 'Block time' : 'New reservation');
     }
     $f.on('click', '.seg-kind button', function () { setKind($(this).data('k')); });
@@ -555,7 +567,7 @@
         start: GPC.time.toHHMM(+v('start')), end: GPC.time.toHHMM(+v('end')),
         notes: v('notes'), skip_conflicts: !!skip
       };
-      if (kind === 'block' && !edit) { p.space_ids = $f.find('[name=space_ids]:checked').map(function () { return +this.value; }).get(); }
+      if (!edit) { p.space_ids = $f.find('[name=space_ids]:checked').map(function () { return +this.value; }).get(); }
       else { p.space_id = +v('space_id'); }
       if (kind === 'reservation') {
         $.extend(p, { name: v('name'), email: v('email'), company: v('company'), title: v('title'),
@@ -638,12 +650,12 @@
       $('<strong></strong>').text(a.name || a.pattern),
       $('<span></span>').text([a.name ? a.pattern : null, a.company].filter(Boolean).join(' · ')),
       $('<span class="muted"></span>').text('asked ' + localDateTime(a.requested_at))));
-    if (a.bookings.length) {
+    if (a.requests.length) {
       var $ul = $('<ul class="ap-list"></ul>');
-      a.bookings.forEach(function (b) {
-        var sp = spaceById(b.space_id) || {};
-        $ul.append($('<li></li>').html('<i class="sw-dot" style="--c:' + (sp.color || '#999') + '"></i>').append(document.createTextNode(
-          (sp.short_name || sp.name || '') + ' · ' + GPC.date.short(b.date) + ', ' + GPC.time.range(b.start_min, b.end_min) + (b.title ? ' · ' + b.title : ''))));
+      a.requests.forEach(function (r) {
+        var sp = spaceById(r.space_id) || {};
+        $ul.append($('<li></li>').html('<i class="sw-dot" style="--c:' + (sp.color || '#999') + '"></i>').append($('<span style="white-space:pre-line"></span>').text(
+          r.rooms + ' · ' + r.when + (r.title ? '\n' + r.title : ''))));
       });
       $c.append($ul);
     } else {
@@ -922,8 +934,8 @@
           input('min_notice_minutes', 'Minimum notice (minutes)', 'number', '0 = can book right up to the start.', { min: 0 }),
           input('max_upcoming_per_email', 'Max upcoming bookings per person', 'number', '0 = no limit.', { min: 0 })),
         $('<div class="row"></div>').append(
-          input('rate_limit_per_hour', 'New bookings per network per hour', 'number', 'Stops automated flooding. Everyone in the building may share one internet connection, so keep this generous.', { min: 1 }),
-          $('<div></div>')),
+          input('repeat_max_weeks', 'Weekly repeats, up to (weeks ahead)', 'number', 'Tenants can tick “Repeat every week” up to this far ahead. 0 = off. Administrators can always set up longer repeats.', { min: 0, max: 52 }),
+          input('rate_limit_per_hour', 'New bookings per network per hour', 'number', 'Stops automated flooding. Everyone in the building may share one internet connection, so keep this generous.', { min: 1 })),
         $('<div style="border-top:1px solid var(--line-soft);padding-top:16px;margin-top:4px"></div>').append(
           check('require_approval', 'Require approval for new email addresses'),
           $('<p class="field-hint" style="margin:-4px 0 14px 28px">Addresses and domains on the approved list book instantly. Anyone else’s booking is held as “pending” and the request is emailed for approval. Manage the list under Approved emails.</p>'),

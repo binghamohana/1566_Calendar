@@ -113,12 +113,20 @@ Http::handle(function (): void {
                 throw new AppError('Booking not found.', 404);
             }
             $createdBy = $booking['created_by_admin'] ? Db::value('SELECT name FROM admins WHERE id = ?', [$booking['created_by_admin']]) : null;
+            // Rooms booked for the same time in the same reservation, and the emails sent for any part of it
+            // (one email covers every room and date, and is logged on the first booking).
+            $group = Bookings::groupOf($booking);
+            $together = array_values(array_filter($group, static fn ($r) => $r['id'] !== $booking['id'] && $r['start_utc'] === $booking['start_utc'] && Bookings::isActive($r)));
+            $groupIds = array_column($group, 'id');
+            $dateIds = array_merge([$booking['id']], array_column($together, 'id'));
             Http::json([
                 'ok'      => true,
                 'booking' => Bookings::adminView($booking) + [
                     'created_by_name' => $createdBy,
                     'manage_url'      => $booking['manage_token'] ? Notify::manageUrl($booking) : null,
                     'series_count'    => $booking['series_id'] ? (int) Db::value("SELECT COUNT(*) FROM bookings WHERE series_id = ? AND status = 'confirmed'", [$booking['series_id']]) : 0,
+                    'series_dates'    => count(Bookings::byOccasion(array_filter($group, [Bookings::class, 'isActive']))),
+                    'together'        => array_map(static fn ($r) => ['id' => $r['id'], 'space_id' => $r['space_id'], 'ref' => $r['ref']], $together),
                 ],
                 'access'  => $booking['status'] === 'pending' && $booking['email']
                     ? (static function (?array $row): ?array {
@@ -133,7 +141,12 @@ Http::handle(function (): void {
                     })(EmailAccess::findByPattern($booking['email']))
                     : null,
                 'history' => Audit::forBooking($booking['id']),
-                'emails'  => Db::all('SELECT id, type, to_email, subject, status, attempts, last_error, sent_at, created_at FROM emails WHERE booking_id = ? ORDER BY id', [$booking['id']]),
+                'emails'  => Db::all(
+                    'SELECT id, type, to_email, subject, status, attempts, last_error, sent_at, created_at FROM emails
+                      WHERE booking_id IN (' . Db::in($dateIds) . ") OR (booking_id IN (" . Db::in($groupIds) . ") AND type NOT IN ('reminder', 'followup', 'expired'))
+                      ORDER BY id",
+                    array_merge($dateIds, $groupIds)
+                ),
             ]);
             return;
 
@@ -142,7 +155,7 @@ Http::handle(function (): void {
             $emailIds = [];
             $first = $result['bookings'][0];
             if ($first['kind'] === 'reservation' && $first['notify']) {
-                $emailIds[] = Notify::confirmation($first, count($result['bookings']));
+                $emailIds[] = Notify::confirmation($first);
             }
             Http::jsonAndFinish([
                 'ok'      => true,
@@ -167,7 +180,7 @@ Http::handle(function (): void {
             $cancelled = Bookings::adminCancel((int) ($in['id'] ?? 0), (string) ($in['scope'] ?? 'one'), (string) ($in['reason'] ?? ''), $admin);
             $emailIds = [];
             if ($cancelled && filter_var($in['notify'] ?? true, FILTER_VALIDATE_BOOLEAN)) {
-                $emailIds[] = Notify::cancelled($cancelled[0], true, count($cancelled));
+                $emailIds[] = Notify::cancelled($cancelled, true);
             }
             Http::jsonAndFinish(['ok' => true, 'cancelled' => count($cancelled)]);
             Mailer::sendNow($emailIds);
@@ -222,7 +235,7 @@ Http::handle(function (): void {
             $entries = preg_split('/[\s,;]+/', (string) ($in['entries'] ?? ''));
             $r = EmailAccess::add($entries, $actor);
             $emailIds = Notify::decisionEmails($r['confirmed'], true);
-            Http::jsonAndFinish(['ok' => true, 'added' => $r['added'], 'invalid' => $r['invalid'], 'confirmed' => count($r['confirmed'])]);
+            Http::jsonAndFinish(['ok' => true, 'added' => $r['added'], 'invalid' => $r['invalid'], 'confirmed' => count(Notify::summaries($r['confirmed']))]);
             Mailer::sendNow($emailIds);
             return;
 
@@ -240,12 +253,12 @@ Http::handle(function (): void {
             if ($action === 'access_approve') {
                 $r = EmailAccess::approve($row, $actor, filter_var($in['whole_domain'] ?? false, FILTER_VALIDATE_BOOLEAN));
                 $emailIds = Notify::decisionEmails($r['confirmed'], true);
-                $count = count($r['confirmed']);
+                $count = count(Notify::summaries($r['confirmed']));
             } else {
                 $reason = (string) ($in['reason'] ?? '');
                 $cancelled = EmailAccess::decline($row, $actor, $reason);
                 $emailIds = Notify::decisionEmails($cancelled, false, $reason);
-                $count = count($cancelled);
+                $count = count(Notify::summaries($cancelled));
             }
             Http::jsonAndFinish(['ok' => true, 'bookings' => $count]);
             Mailer::sendNow($emailIds);
